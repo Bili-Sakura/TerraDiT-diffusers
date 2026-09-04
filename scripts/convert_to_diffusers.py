@@ -1,11 +1,12 @@
 """Convert TerraDiT checkpoints to a self-contained Diffusers family folder.
 
-Each output directory has exactly two custom Python files::
+Each output directory has custom Python files::
 
     pipeline.py
     transformer/transformer_terradit_{alpha|sigma|omega}.py
+    geolocation_encoder/modeling_geolocation.py   # Σ / Ω only
 
-plus component configs so you can drop in VAE / LongCLIP / transformer weights::
+plus component configs so you can drop in VAE / LongCLIP / transformer / RANGE+ weights::
 
     TerraDiT-Alpha-XL/
       model_index.json
@@ -18,6 +19,11 @@ plus component configs so you can drop in VAE / LongCLIP / transformer weights::
         config.json
         transformer_terradit_alpha.py
         diffusion_pytorch_model.safetensors   # written by --ckpt; else upload yourself
+      geolocation_encoder/                    # Σ / Ω only
+        config.json
+        modeling_geolocation.py
+        satclip-vit16-l40.ckpt                # upload from microsoft/SatCLIP-ViT16-L40
+        range_db.npz                          # upload from mvrl/RANGE-database
 
     # code + configs only (upload weights yourself)
     python scripts/convert_to_diffusers.py --skeleton --out release/TerraDiT
@@ -49,6 +55,8 @@ from terradit.models.legacy import load_legacy_transformer
 from terradit.pipelines.constants import PIPELINE_CLASS_NAME, TOKENIZER_ID
 from terradit.pipelines.hub_export import (
     transformer_module_name,
+    write_geolocation_encoder,
+    write_model_index,
     write_repo_skeletons,
     write_self_contained_repo,
 )
@@ -75,6 +83,8 @@ def convert_checkpoint(
     include_aux: bool = False,
     dtype: torch.dtype = torch.float16,
     repo_layout: bool = False,
+    satclip_ckpt: str | None = None,
+    range_db: str | None = None,
 ) -> str:
     """Write a Diffusers pipeline directory and return its path."""
     if family is None and ckpt in MODELS:
@@ -106,7 +116,13 @@ def convert_checkpoint(
         )
         pipe.save_pretrained(out_dir, safe_serialization=True)
 
-    write_self_contained_repo(out_dir, family, arch=arch or getattr(transformer.config, "arch", None))
+    write_self_contained_repo(
+        out_dir,
+        family,
+        arch=arch or getattr(transformer.config, "arch", None),
+        satclip_ckpt=satclip_ckpt,
+        range_db=range_db,
+    )
     return out_dir
 
 
@@ -125,6 +141,10 @@ def main() -> None:
     ap.add_argument("--skeleton", action="store_true",
                     help="write code + configs only (no transformer/VAE/text-encoder weights)")
     ap.add_argument("--dtype", default="fp16", choices=["fp16", "bf16", "fp32"])
+    ap.add_argument("--satclip-ckpt", default=None,
+                    help="SatCLIP Lightning ckpt; extracts the location tower into geolocation_encoder/")
+    ap.add_argument("--range-db", default=None,
+                    help="RANGE+ retrieval database (range_db_large.npz) copied into geolocation_encoder/")
     args = ap.parse_args()
 
     if args.skeleton:
@@ -132,15 +152,30 @@ def main() -> None:
             raise SystemExit("Use either --skeleton or --ckpt, not both.")
         if args.family:
             out = resolve_out_dir(args.out, args.family, args.repo_layout)
-            write_self_contained_repo(out, args.family, arch=args.arch)
+            write_self_contained_repo(
+                out, args.family, arch=args.arch,
+                satclip_ckpt=args.satclip_ckpt, range_db=args.range_db,
+            )
             paths = [out]
         else:
             paths = write_repo_skeletons(args.out, repo_layout=True)
+            if args.satclip_ckpt or args.range_db:
+                for path in paths:
+                    family = "omega" if "Omega" in os.path.basename(path) else (
+                        "sigma" if "Sigma" in os.path.basename(path) else "alpha"
+                    )
+                    write_geolocation_encoder(
+                        path, family, satclip_ckpt=args.satclip_ckpt, range_db=args.range_db,
+                    )
+                    write_model_index(path, family)
         for path in paths:
             print(f"[convert] skeleton -> {path}")
             print("[convert] upload: transformer/diffusion_pytorch_model.safetensors")
             print("[convert] upload: vae/diffusion_pytorch_model.safetensors")
             print("[convert] upload: text_encoder/model.safetensors")
+            if os.path.isdir(os.path.join(path, "geolocation_encoder")):
+                print("[convert] upload: geolocation_encoder/satclip-vit16-l40.ckpt")
+                print("[convert] upload: geolocation_encoder/range_db.npz")
         return
 
     if not args.ckpt:
@@ -153,11 +188,14 @@ def main() -> None:
         args.ckpt, args.out, family=args.family, arch=args.arch,
         legacy=args.legacy, include_aux=args.include_aux, dtype=dtype,
         repo_layout=args.repo_layout,
+        satclip_ckpt=args.satclip_ckpt, range_db=args.range_db,
     )
     class_name = PIPELINE_CLASS_NAME[args.family]
     module = transformer_module_name(args.family)
     print(f"[convert] {args.ckpt} -> {out}")
     print(f"[convert] custom code: pipeline.py + transformer/{module}.py")
+    if os.path.isdir(os.path.join(out, "geolocation_encoder")):
+        print("[convert] RANGE+: geolocation_encoder/modeling_geolocation.py")
     print(
         f"[convert] load with: DiffusionPipeline.from_pretrained({out!r}, trust_remote_code=True)  "
         f"# or {class_name}.from_pretrained({out!r})"

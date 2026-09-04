@@ -45,6 +45,7 @@ from .pipeline_conditioning import (
     OMEGA_CONDITION_DROPOUTS,
     build_conditioning,
     loc_embed_from_latlon,
+    load_geolocation_encoder,
     load_range_model,
 )
 
@@ -167,8 +168,8 @@ class TerraDiTPipelineBase(DiffusionPipeline):
     family: str = "alpha"
     hub_repo_id: str = DIFFUSERS_REPO
     hub_subfolder: str = "TerraDiT-Alpha-XL"
-    model_cpu_offload_seq = "text_encoder->transformer->vae"
-    _optional_components = ["vae", "text_encoder", "tokenizer"]
+    model_cpu_offload_seq = "geolocation_encoder->text_encoder->transformer->vae"
+    _optional_components = ["vae", "text_encoder", "tokenizer", "geolocation_encoder"]
     _callback_tensor_inputs = ["latents", "prompt_embeds", "pooled_prompt_embeds"]
 
     def __init__(
@@ -178,6 +179,7 @@ class TerraDiTPipelineBase(DiffusionPipeline):
         vae: AutoencoderKL | None = None,
         text_encoder: CLIPTextModel | None = None,
         tokenizer: PreTrainedTokenizerBase | CLIPTokenizer | None = None,
+        geolocation_encoder=None,
         caption_max_length: int = CAPTION_MAX_LEN,
         tokenizer_id: str = TOKENIZER_ID,
         vae_id: str = VAE_ID,
@@ -189,6 +191,7 @@ class TerraDiTPipelineBase(DiffusionPipeline):
             vae=vae,
             text_encoder=text_encoder,
             tokenizer=tokenizer,
+            geolocation_encoder=geolocation_encoder,
         )
         vae_scale = 8
         if vae is not None and getattr(vae, "config", None) is not None:
@@ -227,7 +230,20 @@ class TerraDiTPipelineBase(DiffusionPipeline):
         )
         if subfolder is not None:
             kwargs["subfolder"] = subfolder
-        return super().from_pretrained(pretrained_model_name_or_path, **kwargs)
+        skip_geo = "geolocation_encoder" in kwargs
+        pipe = super().from_pretrained(pretrained_model_name_or_path, **kwargs)
+        if (
+            not skip_geo
+            and getattr(pipe, "geolocation_encoder", None) is None
+            and pretrained_model_name_or_path is not None
+        ):
+            load_root = os.fspath(pretrained_model_name_or_path)
+            if kwargs.get("subfolder"):
+                load_root = os.path.join(load_root, kwargs["subfolder"])
+            encoder = load_geolocation_encoder(load_root)
+            if encoder is not None:
+                pipe.register_modules(geolocation_encoder=encoder)
+        return pipe
 
     def encode_prompt(
         self,
@@ -534,9 +550,10 @@ class TerraDiTPipelineBase(DiffusionPipeline):
         dtype: torch.dtype,
     ) -> torch.Tensor:
         if loc_embed is None:
-            if range_model is None and lat is not None and lon is not None:
-                range_model = load_range_model(device)
-            loc_embed = loc_embed_from_latlon(range_model, lat, lon, device)
+            encoder = range_model if range_model is not None else getattr(self, "geolocation_encoder", None)
+            if encoder is None and lat is not None and lon is not None:
+                encoder = load_range_model(device)
+            loc_embed = loc_embed_from_latlon(encoder, lat, lon, device)
         loc_embed = loc_embed.to(device=device, dtype=dtype)
         if loc_embed.ndim == 1:
             loc_embed = loc_embed.unsqueeze(0)

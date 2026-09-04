@@ -12,6 +12,7 @@ from diffusers.pipelines.pipeline_utils import ImagePipelineOutput
 from safetensors.torch import save_file
 
 from terradit.hf import DIFFUSERS_REPO, FAMILY_HUB_SUBFOLDER, VARIANT_HUB_SUBFOLDER, is_diffusers_pipeline_dir
+from terradit.models.geolocation import TerraDiTGeolocationModel
 from terradit.models.sit import interpolate_2d_pos_embed
 from terradit.models.transformer import TerraDiTTransformer2DModel
 from terradit.pipelines.pipeline_common import (
@@ -336,7 +337,10 @@ def test_convert_repo_layout_writes_hub_subfolder(tmp_path):
     index = json.loads(open(os.path.join(out, "model_index.json")).read())
     assert index["_class_name"] == ["pipeline", "TerraDiTSigmaPipeline"]
     assert index["transformer"] == ["transformer_terradit_sigma", "TerraDiTTransformer2DModel"]
+    assert "geolocation_encoder" not in index
     assert (tmp_path / "TerraDiT" / FAMILY_HUB_SUBFOLDER["sigma"] / "transformer" / "transformer_terradit_sigma.py").is_file()
+    assert (tmp_path / "TerraDiT" / FAMILY_HUB_SUBFOLDER["sigma"] / "geolocation_encoder" / "modeling_geolocation.py").is_file()
+    assert (tmp_path / "TerraDiT" / FAMILY_HUB_SUBFOLDER["sigma"] / "geolocation_encoder" / "config.json").is_file()
 
 
 def test_resolve_hub_load_defaults_family_subfolder():
@@ -414,10 +418,24 @@ def _write_tiny_legacy(tmp_path, family="alpha"):
     return src
 
 
-def test_converted_folder_has_no_terradit_imports(tmp_path):
-    src = _write_tiny_legacy(tmp_path)
+@pytest.mark.parametrize(
+    "family,expected_py",
+    [
+        ("alpha", ["pipeline.py", "transformer/transformer_terradit_alpha.py"]),
+        (
+            "sigma",
+            [
+                "geolocation_encoder/modeling_geolocation.py",
+                "pipeline.py",
+                "transformer/transformer_terradit_sigma.py",
+            ],
+        ),
+    ],
+)
+def test_converted_folder_has_no_terradit_imports(tmp_path, family, expected_py):
+    src = _write_tiny_legacy(tmp_path, family=family)
     dest = tmp_path / "diffusers"
-    convert_checkpoint(str(src), str(dest), family="alpha", arch="SiT-B/2", include_aux=False, dtype=torch.float32)
+    convert_checkpoint(str(src), str(dest), family=family, arch="SiT-B/2", include_aux=False, dtype=torch.float32)
     import re
 
     py_files = list(dest.rglob("*.py"))
@@ -427,7 +445,7 @@ def test_converted_folder_has_no_terradit_imports(tmp_path):
         text = path.read_text()
         assert import_re.search(text) is None, f"{path} still has package/relative imports"
     names = sorted(p.relative_to(dest).as_posix() for p in py_files)
-    assert names == ["pipeline.py", "transformer/transformer_terradit_alpha.py"]
+    assert names == expected_py
 
 
 def test_converted_folder_loads_via_diffusers_custom_code(tmp_path):
@@ -500,12 +518,159 @@ def test_hub_skeleton_writes_family_transformer_module(tmp_path):
     assert index["transformer"] == ["transformer_terradit_alpha", "TerraDiTTransformer2DModel"]
     assert index["vae"] == ["diffusers", "AutoencoderKL"]
     assert index["text_encoder"] == ["transformers", "CLIPTextModel"]
+    assert "geolocation_encoder" not in index
+    assert not (tmp_path / "alpha" / "geolocation_encoder").exists()
     assert not list((tmp_path / "alpha").rglob("*.safetensors"))
+
+    write_self_contained_repo(tmp_path / "sigma", "sigma", arch="SiT-XL/2")
+    assert (tmp_path / "sigma" / "geolocation_encoder" / "modeling_geolocation.py").is_file()
+    assert (tmp_path / "sigma" / "geolocation_encoder" / "config.json").is_file()
+    sigma_index = json.loads((tmp_path / "sigma" / "model_index.json").read_text())
+    assert "geolocation_encoder" not in sigma_index
+    geo_cfg = json.loads((tmp_path / "sigma" / "geolocation_encoder" / "config.json").read_text())
+    assert geo_cfg["_class_name"] == "TerraDiTGeolocationModel"
+    assert geo_cfg["embedding_dim"] == 1280
 
     paths = write_repo_skeletons(tmp_path / "repo")
     names = {os.path.basename(p) for p in paths}
     assert names == set(FAMILY_HUB_SUBFOLDER.values()) | {"TerraDiT-Omega-B"}
     assert (tmp_path / "repo" / "TerraDiT-Omega-B" / "transformer" / "transformer_terradit_omega.py").is_file()
+    assert (tmp_path / "repo" / "TerraDiT-Omega-B" / "geolocation_encoder" / "modeling_geolocation.py").is_file()
+    assert not (tmp_path / "repo" / "TerraDiT-Alpha-XL" / "geolocation_encoder").exists()
     omega_cfg = json.loads((tmp_path / "repo" / "TerraDiT-Omega-B" / "transformer" / "config.json").read_text())
     assert omega_cfg["arch"] == "SiT-B/2"
     assert omega_cfg["family"] == "omega"
+
+
+def _tiny_geolocation(**kwargs) -> TerraDiTGeolocationModel:
+    defaults = dict(
+        embedding_dim=16,
+        satclip_dim=8,
+        image_dim=8,
+        legendre_polys=2,
+        nnet_hidden=8,
+        nnet_layers=1,
+    )
+    defaults.update(kwargs)
+    return TerraDiTGeolocationModel(**defaults)
+
+
+def test_geolocation_encoder_zeros_without_database():
+    model = _tiny_geolocation()
+    out = model(torch.tensor([[-90.31, 38.65]]))
+    assert out.shape == (1, 16)
+    assert torch.equal(out, torch.zeros_like(out))
+    via_kwargs = model(latitudes=38.65, longitudes=-90.31)
+    assert torch.equal(via_kwargs, out)
+
+
+def test_geolocation_encoder_retrieves_with_dummy_database(tmp_path):
+    torch.manual_seed(0)
+    np.random.seed(0)
+    model = _tiny_geolocation()
+    locs = np.array([[-90.31, 38.65], [0.0, 0.0], [2.35, 48.86]], dtype=np.float32)
+    archive = tmp_path / "range_db.npz"
+    np.savez(
+        archive,
+        satclip_embeddings=np.random.randn(3, 8).astype(np.float32),
+        image_embeddings=np.random.randn(3, 8).astype(np.float32),
+        locs=locs,
+    )
+    model.attach_database(archive)
+    out = model(torch.tensor([[-90.31, 38.65]]))
+    assert out.shape == (1, 16)
+    assert not torch.allclose(out, torch.zeros_like(out))
+
+
+def test_geolocation_encoder_save_load_roundtrip(tmp_path):
+    model = _tiny_geolocation()
+    dest = tmp_path / "geo"
+    model.save_pretrained(dest)
+    loaded = TerraDiTGeolocationModel.from_pretrained(dest)
+    assert loaded.config.embedding_dim == 16
+    assert loaded.config.legendre_polys == 2
+    assert not loaded._has_database
+
+
+def test_sigma_pipeline_uses_geolocation_encoder():
+    geo = TerraDiTGeolocationModel(
+        embedding_dim=1280,
+        satclip_dim=256,
+        image_dim=1024,
+        legendre_polys=2,
+        nnet_hidden=8,
+        nnet_layers=1,
+    )
+    pipe = FAMILY_CLS["sigma"](
+        transformer=_tiny_transformer("sigma"),
+        scheduler=FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, shift=1.0),
+        vae=_tiny_vae(),
+        geolocation_encoder=geo,
+    )
+    y, yp = _prompt_embeds()
+    out = pipe(
+        prompt_embeds=y,
+        pooled_prompt_embeds=yp,
+        lat=38.65,
+        lon=-90.31,
+        point_prompts=torch.nn.functional.normalize(torch.randn(1, 2, 768), dim=-1),
+        pos=torch.tensor([[[10, 12], [40, 50]]]),
+        mask=torch.zeros(1, 2),
+        height=pipe.transformer.config.resolution,
+        width=pipe.transformer.config.resolution,
+        num_inference_steps=2,
+        output_type="latent",
+    )
+    assert out.images.shape[0] == 1
+
+
+def test_converted_sigma_loads_with_optional_geolocation(tmp_path):
+    src = _write_tiny_legacy(tmp_path, family="sigma")
+    dest = tmp_path / "diffusers"
+    convert_checkpoint(str(src), str(dest), family="sigma", arch="SiT-B/2", include_aux=False, dtype=torch.float32)
+    loaded = TerraDiTSigmaPipeline.from_pretrained(
+        str(dest),
+        vae=_tiny_vae(),
+        text_encoder=None,
+        tokenizer=None,
+        geolocation_encoder=None,
+        trust_remote_code=True,
+    )
+    assert loaded.geolocation_encoder is None
+    assert (dest / "geolocation_encoder" / "modeling_geolocation.py").is_file()
+    y, yp = _prompt_embeds()
+    out = loaded(
+        prompt_embeds=y,
+        pooled_prompt_embeds=yp,
+        loc_embed=torch.nn.functional.normalize(torch.randn(1, 1280), dim=-1),
+        point_prompts=torch.nn.functional.normalize(torch.randn(1, 2, 768), dim=-1),
+        pos=torch.tensor([[[10, 12], [40, 50]]]),
+        mask=torch.zeros(1, 2),
+        height=32,
+        width=32,
+        num_inference_steps=2,
+        output_type="latent",
+    )
+    assert out.images.shape == (1, 4, 4, 4)
+
+
+def test_converted_sigma_attaches_geolocation_weights(tmp_path):
+    src = _write_tiny_legacy(tmp_path, family="sigma")
+    dest = tmp_path / "diffusers"
+    convert_checkpoint(str(src), str(dest), family="sigma", arch="SiT-B/2", include_aux=False, dtype=torch.float32)
+    geo = _tiny_geolocation()
+    geo.save_pretrained(dest / "geolocation_encoder")
+    # Keep the Hub modeling file next to the tiny weights.
+    from terradit.pipelines.hub_export import write_geolocation_encoder
+
+    write_geolocation_encoder(dest, "sigma")
+    geo.save_pretrained(dest / "geolocation_encoder")
+    loaded = TerraDiTSigmaPipeline.from_pretrained(
+        str(dest),
+        vae=_tiny_vae(),
+        text_encoder=None,
+        tokenizer=None,
+        trust_remote_code=True,
+    )
+    assert loaded.geolocation_encoder is not None
+    assert loaded.geolocation_encoder.config.embedding_dim == 16

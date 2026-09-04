@@ -86,7 +86,8 @@ with `FlowMatchEulerDiscreteScheduler` (100 Euler steps, no CFG, SDXL VAE).
 Converted folders live on [BiliSakura/TerraDiT](https://huggingface.co/BiliSakura/TerraDiT)
 as `TerraDiT-Alpha-XL` / `TerraDiT-Sigma-XL` / `TerraDiT-Omega-XL` / `TerraDiT-Omega-B`.
 Each folder is a self-contained [SiT-diffusers](https://huggingface.co/BiliSakura/SiT-diffusers)-style
-repo: one `pipeline.py` and one `transformer/transformer_terradit_{alpha|sigma|omega}.py`.
+repo: one `pipeline.py`, one `transformer/transformer_terradit_{alpha|sigma|omega}.py`, and on
+Σ / Ω a `geolocation_encoder/` folder for RANGE+ (SatCLIP location tower + retrieval DB).
 VAE / LongCLIP / tokenizer configs are included so those weights can be uploaded beside them.
 Write the four Hub folders (code + configs, no weights) with
 `python scripts/convert_to_diffusers.py --skeleton --out release/TerraDiT`.
@@ -203,10 +204,21 @@ python terradit/omega_demo.py --subfolder TerraDiT-Omega-B --condition-type box
 
 Each demo writes 4 samples plus an overlay of the conditioning to `samples/<family>/`.
 
-**Geolocation.** With `--lat/--lon` the [RANGE+](https://github.com/mvrl/RANGE) submodule
-(`terradit/RANGE`; run `git submodule update --init` if you cloned without `--recursive`)
-encodes the location live; its SatCLIP weights and retrieval database are fetched from the
-Hub. Without coordinates, or with `--no-range`, a zero embedding is used.
+**Geolocation.** Σ and Ω encode WGS84 `lat` / `lon` with RANGE+ (1280-d). Converted Hub
+folders ship that encoder as its own component::
+
+    geolocation_encoder/
+      modeling_geolocation.py
+      config.json
+      satclip-vit16-l40.ckpt    # microsoft/SatCLIP-ViT16-L40 (location tower)
+      range_db.npz              # mvrl/RANGE-database (`range_db_large.npz`)
+
+`DiffusionPipeline.from_pretrained(..., trust_remote_code=True)` loads the code from that
+subfolder. Drop the two weight files in and `pipe(lat=..., lon=...)` runs RANGE+ with no
+extra install. Without those files (or without coordinates) the location embedding is
+zeros — in-distribution for Σ, which trained with location dropout. The
+[RANGE+](https://github.com/mvrl/RANGE) git submodule remains a fallback for the in-repo
+demos (`git submodule update --init`).
 
 ## Downloads
 
@@ -222,11 +234,13 @@ shares one SiT backbone (`terradit/models/sit.py`, shipped on the Hub as
 [SiT-diffusers](https://huggingface.co/BiliSakura/SiT-diffusers))
 and the Diffusers flow-matching Euler scheduler (100 steps, no classifier-free guidance).
 Convert them to a one-stop Diffusers folder (`pipeline.py`,
-`transformer/transformer_terradit_*.py`, VAE / LongCLIP / tokenizer configs,
-`scheduler/scheduler_config.json`, `model_index.json`) with `scripts/convert_to_diffusers.py`
+`transformer/transformer_terradit_*.py`, `geolocation_encoder/modeling_geolocation.py` on
+Σ / Ω, VAE / LongCLIP / tokenizer configs, `scheduler/scheduler_config.json`,
+`model_index.json`) with `scripts/convert_to_diffusers.py`
 (`--skeleton` writes code + configs only; `--repo-layout` writes `TerraDiT-Alpha-XL` /
 `TerraDiT-Sigma-XL` / `TerraDiT-Omega-XL` / `TerraDiT-Omega-B`; `--include-aux` also
-writes the SDXL VAE and LongCLIP weights).
+writes the SDXL VAE and LongCLIP weights; `--satclip-ckpt` / `--range-db` attach RANGE+
+weights into `geolocation_encoder/`).
 The derived data (tile ids + coordinates + `hf_idx`, OSM point rasters, instance geometry,
 RANGE+ embeddings, test splits) mirrors the layout the code expects; see
 [docs/DATA.md](docs/DATA.md) for the layout, provenance, and custom data.

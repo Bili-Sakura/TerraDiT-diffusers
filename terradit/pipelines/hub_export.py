@@ -14,12 +14,13 @@
 
 """Write one self-contained Diffusers folder per TerraDiT family.
 
-Each Hub subfolder has exactly two custom Python files (SiT-diffusers style)::
+Each Hub subfolder has custom Python files (SiT-diffusers style)::
 
     pipeline.py
     transformer/transformer_terradit_{family}.py
+    geolocation_encoder/modeling_geolocation.py   # Σ / Ω only (RANGE+)
 
-plus component configs so VAE / LongCLIP / tokenizer weights can be dropped in::
+plus component configs so VAE / LongCLIP / tokenizer / RANGE+ weights can be dropped in::
 
     model_index.json
     scheduler/scheduler_config.json
@@ -27,11 +28,13 @@ plus component configs so VAE / LongCLIP / tokenizer weights can be dropped in::
     text_encoder/config.json                 # upload model.safetensors
     tokenizer/tokenizer_config.json          # vocab.json + merges.txt filled by convert
     transformer/config.json                  # upload diffusion_pytorch_model.safetensors
+    geolocation_encoder/config.json          # Σ / Ω: upload SatCLIP ckpt + range_db.npz
 """
 
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -226,8 +229,41 @@ def _ensure_tokenizer_vocab(tokenizer_dir: Path) -> None:
             return
 
 
+def write_geolocation_encoder(
+    output_path: str | Path,
+    family: str,
+    *,
+    satclip_ckpt: str | Path | None = None,
+    range_db: str | Path | None = None,
+) -> Path | None:
+    """Write RANGE+ code + config for Σ / Ω. Optionally attach SatCLIP weights and the DB."""
+    family = (family or "alpha").lower()
+    if family == "alpha":
+        return None
+    output_path = Path(output_path)
+    geo_dir = output_path / "geolocation_encoder"
+    geo_dir.mkdir(parents=True, exist_ok=True)
+    src = Path(__file__).resolve().parent.parent / "models" / "geolocation.py"
+    (geo_dir / "modeling_geolocation.py").write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+    assets = Path(__file__).resolve().parent / "hub_assets" / "geolocation_encoder"
+    if assets.is_dir():
+        _copy_asset_tree(assets, geo_dir)
+    satclip_ckpt = satclip_ckpt or os.environ.get("SATCLIP_CKPT") or os.environ.get("TERRADIT_SATCLIP_CKPT")
+    if satclip_ckpt and Path(satclip_ckpt).is_file():
+        from terradit.models.geolocation import TerraDiTGeolocationModel
+
+        model = TerraDiTGeolocationModel.from_satclip_checkpoint(satclip_ckpt)
+        model.save_pretrained(geo_dir)
+        (geo_dir / "modeling_geolocation.py").write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+    if range_db and Path(range_db).is_file():
+        dest = geo_dir / "range_db.npz"
+        if Path(range_db).resolve() != dest.resolve():
+            shutil.copy2(range_db, dest)
+    return geo_dir
+
+
 def write_component_configs(output_path: str | Path, *, family: str | None = None, arch: str | None = None) -> None:
-    """Write VAE / LongCLIP / tokenizer / scheduler configs (no weight files)."""
+    """Write VAE / LongCLIP / tokenizer / scheduler / RANGE+ configs (no weight files)."""
     output_path = Path(output_path)
     assets = Path(__file__).resolve().parent / "hub_assets"
     for name in ("vae", "text_encoder", "tokenizer", "scheduler"):
@@ -242,6 +278,8 @@ def write_component_configs(output_path: str | Path, *, family: str | None = Non
             json.dumps(default_transformer_config(family, arch=arch), indent=2) + "\n",
             encoding="utf-8",
         )
+    if family is not None and family != "alpha":
+        write_geolocation_encoder(output_path, family)
 
 
 def default_transformer_config(family: str, arch: str | None = None) -> dict:
@@ -294,6 +332,29 @@ def write_model_index(output_path: str | Path, family: str) -> None:
     index["vae"] = ["diffusers", "AutoencoderKL"]
     index["text_encoder"] = ["transformers", "CLIPTextModel"]
     index["tokenizer"] = ["transformers", "CLIPTokenizer"]
+    geo_dir = output_path / "geolocation_encoder"
+    has_geo_weights = False
+    if geo_dir.is_dir():
+        names = [
+            "diffusion_pytorch_model.safetensors",
+            "model.safetensors",
+            "diffusion_pytorch_model.bin",
+            "pytorch_model.bin",
+            "satclip-vit16-l40.ckpt",
+        ]
+        config_path = geo_dir / "config.json"
+        if config_path.is_file():
+            try:
+                extra = json.loads(config_path.read_text(encoding="utf-8")).get("satclip_filename")
+                if extra:
+                    names.append(str(extra))
+            except Exception:
+                pass
+        has_geo_weights = any((geo_dir / name).is_file() for name in names)
+    if family != "alpha" and has_geo_weights:
+        index["geolocation_encoder"] = ["modeling_geolocation", "TerraDiTGeolocationModel"]
+    else:
+        index.pop("geolocation_encoder", None)
     index_path.write_text(json.dumps(index, indent=2) + "\n", encoding="utf-8")
 
 
@@ -302,8 +363,10 @@ def write_self_contained_repo(
     family: str,
     *,
     arch: str | None = None,
+    satclip_ckpt: str | Path | None = None,
+    range_db: str | Path | None = None,
 ) -> None:
-    """Write the two custom Python files plus component configs."""
+    """Write the custom Python files plus component configs."""
     family = (family or "alpha").lower()
     if family not in FAMILY_PIPELINE_FILE:
         raise ValueError(f"unknown TerraDiT family {family!r}")
@@ -313,6 +376,8 @@ def write_self_contained_repo(
     _write_inlined_pipeline(output_path, family)
     _write_inlined_transformer(output_path, family)
     write_component_configs(output_path, family=family, arch=arch)
+    if family != "alpha":
+        write_geolocation_encoder(output_path, family, satclip_ckpt=satclip_ckpt, range_db=range_db)
     write_model_index(output_path, family)
     _cleanup_legacy_py(output_path, family)
 

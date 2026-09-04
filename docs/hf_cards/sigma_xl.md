@@ -35,7 +35,7 @@ image = pipe("a dense residential neighborhood", points=[[120, 80, "building hou
 
 Files: `model.safetensors` (state dict, keys as in `terradit/models/sit.py`, REPA projectors
 removed) and `config.json`, or a converted Diffusers folder from
-`scripts/convert_to_diffusers.py`.
+`scripts/convert_to_diffusers.py` (RANGE+ lives in `geolocation_encoder/`).
 
 ## Evaluation
 

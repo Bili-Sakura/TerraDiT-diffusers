@@ -112,10 +112,12 @@ def main():
             lat = lon = None  # a custom prompt without coords -> no location
         range_model = None
         if not args.no_range and lat is not None and lon is not None:
-            range_model = load_range_model(device)
+            if getattr(pipe, "geolocation_encoder", None) is None:
+                range_model = load_range_model(device)
         coords_raw, mask_raw, point_tags = pack_sigma_points(points, torch.device("cpu"))
+        using_range = range_model is not None or getattr(pipe, "geolocation_encoder", None) is not None
         srcdesc = (f"manual ({len(points)} points, "
-                   f"{'RANGE+ ' + str((lat, lon)) if range_model is not None else 'no geolocation'})")
+                   f"{'RANGE+ ' + str((lat, lon)) if using_range and lat is not None else 'no geolocation'})")
         pipe_kwargs = dict(prompt=caption, points=points, lat=lat, lon=lon, range_model=range_model)
     else:
         # ---- dataset mode ----

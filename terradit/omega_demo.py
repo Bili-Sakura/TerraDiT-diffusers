@@ -114,7 +114,8 @@ def main():
         lat, lon = spec.get("lat"), spec.get("lon")
         range_model = None
         if not args.no_range and lat is not None and lon is not None:
-            range_model = load_range_model(device)
+            if getattr(pipe, "geolocation_encoder", None) is None:
+                range_model = load_range_model(device)
         instances = spec["instances"]
         pipe_kwargs = dict(prompt=spec.get("caption", ""), instances=instances,
                            lat=lat, lon=lon, range_model=range_model, dropout_probs=dropouts)
@@ -124,8 +125,9 @@ def main():
                    bbox_xyxy=g["bbox_xyxy"], point_xy=g["point_xy"],
                    instance_mask=g["instance_mask"], tags=g["tags"])
         caption = spec.get("caption", "")
+        using_range = range_model is not None or getattr(pipe, "geolocation_encoder", None) is not None
         srcdesc = (f"manual ({len(instances)} instances, "
-                   f"{'RANGE+ ' + str((lat, lon)) if range_model is not None else 'no geolocation'})")
+                   f"{'RANGE+ ' + str((lat, lon)) if using_range and lat is not None else 'no geolocation'})")
     else:
         # ---- dataset mode ----
         from terradit.hf import load_git10m

@@ -19,6 +19,7 @@ Copied next to ``pipeline.py``. Do not import ``terradit``.
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 
@@ -43,8 +44,71 @@ def _default_range_dir() -> str:
     return env or os.path.join(os.path.dirname(here), "RANGE")
 
 
+GEO_WEIGHT_FILENAMES = (
+    "diffusion_pytorch_model.safetensors",
+    "model.safetensors",
+    "diffusion_pytorch_model.bin",
+    "pytorch_model.bin",
+    "satclip-vit16-l40.ckpt",
+)
+
+
+def geolocation_folder_has_weights(folder):
+    if not folder or not os.path.isdir(folder):
+        return False
+    names = list(GEO_WEIGHT_FILENAMES)
+    config_path = os.path.join(folder, "config.json")
+    if os.path.isfile(config_path):
+        try:
+            with open(config_path, encoding="utf-8") as handle:
+                extra = json.load(handle).get("satclip_filename")
+            if extra:
+                names.append(str(extra))
+        except Exception:
+            pass
+    return any(os.path.isfile(os.path.join(folder, name)) for name in names)
+
+
+def _import_geolocation_cls(geo_dir):
+    """Load ``TerraDiTGeolocationModel`` from the Hub file or this repo (no ``terradit`` import)."""
+    import importlib.util
+
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(geo_dir, "modeling_geolocation.py"),
+        os.path.join(here, "..", "models", "geolocation.py"),
+    ]
+    for path in candidates:
+        path = os.path.abspath(path)
+        if not os.path.isfile(path):
+            continue
+        spec = importlib.util.spec_from_file_location("terradit_modeling_geolocation", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.TerraDiTGeolocationModel
+    return None
+
+
+def load_geolocation_encoder(pretrained_path, *, torch_dtype=None):
+    """Load ``geolocation_encoder/`` from a converted folder when weights are present."""
+    if not pretrained_path or not os.path.isdir(pretrained_path):
+        return None
+    geo_dir = os.path.join(os.fspath(pretrained_path), "geolocation_encoder")
+    if not geolocation_folder_has_weights(geo_dir):
+        return None
+    model_cls = _import_geolocation_cls(geo_dir)
+    if model_cls is None:
+        return None
+    try:
+        kwargs = {} if torch_dtype is None else {"torch_dtype": torch_dtype}
+        return model_cls.from_pretrained(geo_dir, **kwargs)
+    except Exception as exc:
+        print(f"[range] geolocation_encoder unavailable ({type(exc).__name__}: {exc})")
+        return None
+
+
 def load_range_model(device, *, beta=0.5, range_dir=None):
-    """Lazily load RANGE+ for live lat/lon -> embedding. Returns None if unavailable."""
+    """Lazily load the RANGE+ git submodule. Prefer ``geolocation_encoder/`` on the Hub."""
     range_dir = range_dir or _default_range_dir()
     if not os.path.isdir(os.path.join(range_dir, "range")):
         print(

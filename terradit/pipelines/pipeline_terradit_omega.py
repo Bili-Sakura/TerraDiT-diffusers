@@ -93,6 +93,9 @@ class TerraDiTOmegaPipeline(TerraDiTPipelineBase):
             LongCLIP text encoder. Loaded from the tokenizer id when omitted.
         tokenizer ([`CLIPTokenizer`], *optional*):
             LongCLIP tokenizer (144-token captions).
+        geolocation_encoder ([`TerraDiTGeolocationModel`], *optional*):
+            RANGE+ lat/lon encoder loaded from ``geolocation_encoder/``. Used when
+            `lat` / `lon` are passed and `loc_embed` is omitted.
     """
 
     family = "omega"
@@ -184,7 +187,8 @@ class TerraDiTOmegaPipeline(TerraDiTPipelineBase):
             loc_embed (`torch.Tensor`, *optional*):
                 Precomputed RANGE+ embedding `(batch, 1280)` or `(1280,)`.
             range_model:
-                Optional live RANGE+ encoder. Loaded from the submodule when needed.
+                Optional live RANGE+ encoder. Defaults to `geolocation_encoder`, then
+                the RANGE git submodule.
             instances (`list[dict]`, *optional*):
                 Ω primitives: `{"type": "polygon|polyline|bbox|point", "coords": ..., "tag": ...}`.
             inst_text_embed / polygon_xy / ... / instance_mask:
