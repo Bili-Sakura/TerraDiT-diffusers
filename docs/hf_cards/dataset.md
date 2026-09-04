@@ -52,7 +52,9 @@ This dataset is released under the **Open Database License (ODbL) 1.0**.
   and row indices into the pinned Git-10M snapshot. No Git-10M captions or statistics are
   redistributed; Git-10M itself is CC-BY-NC-ND-4.0 and must be obtained from its authors' repo.
 * **RANGE+ embeddings** (`range_plus/`, `splits/*/range_plus.npz`): computed from tile coordinates
-  with [RANGE](https://github.com/mvrl/RANGE) (SatCLIP + RANGE database).
+  with [RANGE](https://github.com/mvrl/RANGE) (SatCLIP location encoder
+  [`MVRL/satclip-loc-enc-vit16-l40`](https://huggingface.co/MVRL/satclip-loc-enc-vit16-l40)
+  + RANGE database).
 
 ## Citation
 

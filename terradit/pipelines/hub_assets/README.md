@@ -10,4 +10,4 @@ stored here — drop them next to these configs when publishing:
 | `tokenizer/` | tokenizer JSON (+ `vocab.json` / `merges.txt` written by convert) | none (not a weight) |
 | `scheduler/` | `scheduler_config.json` | none |
 | `transformer/` | written from the checkpoint or skeleton defaults | `diffusion_pytorch_model.safetensors` |
-| `geolocation_encoder/` | Σ / Ω only: RANGE+ code + config | `satclip-vit16-l40.ckpt` from `microsoft/SatCLIP-ViT16-L40` and `range_db.npz` from `mvrl/RANGE-database` (`range_db_large.npz`) |
+| `geolocation_encoder/` | Σ / Ω only: RANGE+ code + config | `model.safetensors` from `MVRL/satclip-loc-enc-vit16-l40` (location encoder only) and `range_db.npz` from `mvrl/RANGE-database` (`range_db_large.npz`) |

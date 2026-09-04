@@ -2,8 +2,9 @@
 
 Point prompts are (x, y, "osm tag") with x, y in tile pixels [0, 256). Edit EXAMPLE
 below, pass --points, or let the demo scatter random tagged points (--random-points K).
-Geolocation is optional: with --lat/--lon the RANGE+ submodule encodes it live;
-otherwise a zero embedding is used (in-distribution: sigma trained with location dropout).
+Geolocation is optional: with --lat/--lon RANGE+ encodes it live from the
+location-encoder safetensors + retrieval database; otherwise a zero embedding is used
+(in-distribution: sigma trained with location dropout).
 
     python terradit/sigma_demo.py                                   # EXAMPLE below
     python terradit/sigma_demo.py --random-points 12 --seed 3       # random tags/positions

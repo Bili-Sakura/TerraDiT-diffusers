@@ -22,7 +22,7 @@ plus component configs so you can drop in VAE / LongCLIP / transformer / RANGE+ 
       geolocation_encoder/                    # Σ / Ω only
         config.json
         modeling_geolocation.py
-        satclip-vit16-l40.ckpt                # upload from microsoft/SatCLIP-ViT16-L40
+        model.safetensors                     # upload from MVRL/satclip-loc-enc-vit16-l40
         range_db.npz                          # upload from mvrl/RANGE-database
 
     # code + configs only (upload weights yourself)
@@ -142,7 +142,8 @@ def main() -> None:
                     help="write code + configs only (no transformer/VAE/text-encoder weights)")
     ap.add_argument("--dtype", default="fp16", choices=["fp16", "bf16", "fp32"])
     ap.add_argument("--satclip-ckpt", default=None,
-                    help="SatCLIP Lightning ckpt; extracts the location tower into geolocation_encoder/")
+                    help="Location-encoder weights: MVRL safetensors, a folder, a legacy Lightning ckpt, "
+                         "or 'hub' to fetch MVRL/satclip-loc-enc-vit16-l40")
     ap.add_argument("--range-db", default=None,
                     help="RANGE+ retrieval database (range_db_large.npz) copied into geolocation_encoder/")
     args = ap.parse_args()
@@ -174,7 +175,7 @@ def main() -> None:
             print("[convert] upload: vae/diffusion_pytorch_model.safetensors")
             print("[convert] upload: text_encoder/model.safetensors")
             if os.path.isdir(os.path.join(path, "geolocation_encoder")):
-                print("[convert] upload: geolocation_encoder/satclip-vit16-l40.ckpt")
+                print("[convert] upload: geolocation_encoder/model.safetensors  # MVRL/satclip-loc-enc-vit16-l40")
                 print("[convert] upload: geolocation_encoder/range_db.npz")
         return
 

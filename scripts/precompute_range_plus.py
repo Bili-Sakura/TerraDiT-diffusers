@@ -3,8 +3,9 @@
 Reads ``latitude`` / ``longitude`` from each metadata row and writes an ``.npz`` with
 ``embeddings`` [N, 1280] (fp16) and ``locs`` [N, 2] (lon, lat), row-aligned with the
 metadata, i.e. the same layout as ``range_plus/omega.npz`` in MVRL/TerraDiT-data.
-Requires the RANGE submodule (``git submodule update --init``); SatCLIP weights and
-the RANGE database are fetched from the Hub on first use.
+Downloads the SatCLIP location encoder (``MVRL/satclip-loc-enc-vit16-l40`` safetensors)
+and the RANGE retrieval database from the Hub on first use. The original full SatCLIP
+checkpoint is not required.
 
     python scripts/precompute_range_plus.py --metadata data/git10m/metadata/my.json \
         --out data/git10m/range_plus/my.npz

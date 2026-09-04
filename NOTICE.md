@@ -20,7 +20,7 @@ license. The components below carry their own terms.
 | [SiT](https://github.com/willisma/SiT) | diffusion transformer backbone and flow-matching sampler | MIT |
 | [REPA](https://github.com/sihyun-yu/REPA) | representation-alignment training loss and trainer structure | MIT |
 | [RANGE](https://github.com/mvrl/RANGE) | RANGE+ geolocation encoder (git submodule at `terradit/RANGE`) | MVRL; see the RANGE repository |
-| [SatCLIP ViT16-L40](https://huggingface.co/microsoft/SatCLIP-ViT16-L40) | location encoder used inside RANGE+ | MIT |
+| [SatCLIP location encoder ViT16-L40](https://huggingface.co/MVRL/satclip-loc-enc-vit16-l40) | RANGE+ location tower (safetensors extracted from [microsoft/SatCLIP-ViT16-L40](https://huggingface.co/microsoft/SatCLIP-ViT16-L40)) | MIT |
 | [SDXL VAE](https://huggingface.co/stabilityai/sdxl-vae) | latent encoder / decoder | MIT |
 | [LongCLIP KO-LITE](https://huggingface.co/zer0int/LongCLIP-KO-LITE-TypoAttack-Attn-ViT-L-14) | text encoder | MIT |
 | [DINOv3](https://github.com/facebookresearch/dinov3) SAT-493M ViT-L/16 | frozen REPA target encoder (training only) | DINOv3 License (Meta). Weights are obtained by the user from Meta and are not redistributed. |
