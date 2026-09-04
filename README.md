@@ -86,8 +86,11 @@ with `FlowMatchEulerDiscreteScheduler` (100 Euler steps, no CFG, SDXL VAE).
 Converted folders live on [BiliSakura/TerraDiT](https://huggingface.co/BiliSakura/TerraDiT)
 as `TerraDiT-Alpha-XL` / `TerraDiT-Sigma-XL` / `TerraDiT-Omega-XL` / `TerraDiT-Omega-B`.
 Each folder is a self-contained [SiT-diffusers](https://huggingface.co/BiliSakura/SiT-diffusers)-style
-repo (`pipeline.py` + `transformer/transformer_sit.py`) and loads without installing this
-package. Convert a training checkpoint with
+repo: one `pipeline.py` and one `transformer/transformer_terradit_{alpha|sigma|omega}.py`.
+VAE / LongCLIP / tokenizer configs are included so those weights can be uploaded beside them.
+Write the four Hub folders (code + configs, no weights) with
+`python scripts/convert_to_diffusers.py --skeleton --out release/TerraDiT`.
+Convert a training checkpoint with
 `python scripts/convert_to_diffusers.py --ckpt omega_xl --out release/TerraDiT --repo-layout`.
 
 Coordinates below are tile pixels in `[0, 256)`, x to the right and y down. Tags follow
@@ -215,12 +218,15 @@ Hub. Without coordinates, or with `--no-range`, a zero embedding is used.
 
 All released weights are EMA, fp16 safetensors with a `config.json` beside them; every family
 shares one SiT backbone (`terradit/models/sit.py`, shipped on the Hub as
-`transformer/transformer_sit.py` like [SiT-diffusers](https://huggingface.co/BiliSakura/SiT-diffusers))
+`transformer/transformer_terradit_{alpha|sigma|omega}.py` like
+[SiT-diffusers](https://huggingface.co/BiliSakura/SiT-diffusers))
 and the Diffusers flow-matching Euler scheduler (100 steps, no classifier-free guidance).
-Convert them to a one-stop Diffusers folder (`pipeline.py`, `transformer/transformer_sit.py`,
+Convert them to a one-stop Diffusers folder (`pipeline.py`,
+`transformer/transformer_terradit_*.py`, VAE / LongCLIP / tokenizer configs,
 `scheduler/scheduler_config.json`, `model_index.json`) with `scripts/convert_to_diffusers.py`
-(`--repo-layout` writes `TerraDiT-Alpha-XL` / `TerraDiT-Sigma-XL` / `TerraDiT-Omega-XL` /
-`TerraDiT-Omega-B`; `--include-aux` also writes the SDXL VAE and LongCLIP).
+(`--skeleton` writes code + configs only; `--repo-layout` writes `TerraDiT-Alpha-XL` /
+`TerraDiT-Sigma-XL` / `TerraDiT-Omega-XL` / `TerraDiT-Omega-B`; `--include-aux` also
+writes the SDXL VAE and LongCLIP weights).
 The derived data (tile ids + coordinates + `hf_idx`, OSM point rasters, instance geometry,
 RANGE+ embeddings, test splits) mirrors the layout the code expects; see
 [docs/DATA.md](docs/DATA.md) for the layout, provenance, and custom data.

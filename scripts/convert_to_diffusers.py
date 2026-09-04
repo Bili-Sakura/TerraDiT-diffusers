@@ -1,40 +1,35 @@
-"""Convert TerraDiT release / training checkpoints to a Diffusers pipeline folder.
+"""Convert TerraDiT checkpoints to a self-contained Diffusers family folder.
 
-Each output directory is a self-contained family variant that
-``DiffusionPipeline.from_pretrained(..., trust_remote_code=True)`` can load
-without installing this repository. Layout matches ``BiliSakura/SiT-diffusers``::
+Each output directory has exactly two custom Python files::
+
+    pipeline.py
+    transformer/transformer_terradit_{alpha|sigma|omega}.py
+
+plus component configs so you can drop in VAE / LongCLIP / transformer weights::
 
     TerraDiT-Alpha-XL/
-      model_index.json          # _class_name=["pipeline", "TerraDiTAlphaPipeline"]
-      pipeline.py               # family pipeline (relative imports only)
-      pipeline_common.py
-      pipeline_conditioning.py
-      constants.py
+      model_index.json
+      pipeline.py
       scheduler/scheduler_config.json
+      vae/config.json                         # upload diffusion_pytorch_model.safetensors
+      text_encoder/config.json                # upload model.safetensors
+      tokenizer/                              # tokenizer JSON + vocab/merges
       transformer/
         config.json
-        diffusion_pytorch_model.safetensors
-        transformer_sit.py      # TerraDiTTransformer2DModel
-        sit.py localattn.py omega.py
+        transformer_terradit_alpha.py
+        diffusion_pytorch_model.safetensors   # written by --ckpt; else upload yourself
 
-Hub layout::
+    # code + configs only (upload weights yourself)
+    python scripts/convert_to_diffusers.py --skeleton --out release/TerraDiT
 
-    BiliSakura/TerraDiT/TerraDiT-Alpha-XL
-    BiliSakura/TerraDiT/TerraDiT-Sigma-XL
-    BiliSakura/TerraDiT/TerraDiT-Omega-XL
-    BiliSakura/TerraDiT/TerraDiT-Omega-B
-
-    # released Hub weights (auto-download) -> family folder
-    python scripts/convert_to_diffusers.py --ckpt omega_xl --out release/TerraDiT-Omega-XL
-
-    # write the four Hub subfolders under a repo root
-    python scripts/convert_to_diffusers.py --ckpt alpha_xl --out release/TerraDiT --repo-layout
+    # released Hub weights -> family folder (transformer weights included)
+    python scripts/convert_to_diffusers.py --ckpt omega_xl --out release/TerraDiT --repo-layout
 
     # training .pt
     python scripts/convert_to_diffusers.py --ckpt exps/run/checkpoints/0400000.pt \
         --family omega --arch SiT-B/2 --out release/TerraDiT-Omega-B
 
-    # include SDXL VAE + LongCLIP so the folder is one-stop
+    # also serialize SDXL VAE + LongCLIP weights into the folder
     python scripts/convert_to_diffusers.py --ckpt alpha_xl --out release/TerraDiT-Alpha-XL --include-aux
 """
 from __future__ import annotations
@@ -52,7 +47,11 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from terradit.hf import FAMILY_HUB_SUBFOLDER, MODELS, VARIANT_HUB_SUBFOLDER, VAE_ID
 from terradit.models.legacy import load_legacy_transformer
 from terradit.pipelines.constants import PIPELINE_CLASS_NAME, TOKENIZER_ID
-from terradit.pipelines.hub_export import write_self_contained_repo
+from terradit.pipelines.hub_export import (
+    transformer_module_name,
+    write_repo_skeletons,
+    write_self_contained_repo,
+)
 from terradit.pipelines.pipeline_terradit import pipeline_class_for_family
 
 
@@ -96,8 +95,8 @@ def convert_checkpoint(
     for name in extra:
         os.remove(os.path.join(out_dir, "scheduler", name))
 
-    pipe_cls = pipeline_class_for_family(family)
     if include_aux:
+        pipe_cls = pipeline_class_for_family(family)
         pipe = pipe_cls(
             transformer=transformer,
             scheduler=scheduler,
@@ -107,24 +106,45 @@ def convert_checkpoint(
         )
         pipe.save_pretrained(out_dir, safe_serialization=True)
 
-    write_self_contained_repo(out_dir, family)
+    write_self_contained_repo(out_dir, family, arch=arch or getattr(transformer.config, "arch", None))
     return out_dir
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--ckpt", required=True,
+    ap.add_argument("--ckpt", default=None,
                     help="release name, safetensors dir/file, training .pt, or Diffusers folder")
     ap.add_argument("--out", required=True, help="output directory (created)")
     ap.add_argument("--family", default=None, choices=["alpha", "sigma", "omega"])
     ap.add_argument("--arch", default=None)
     ap.add_argument("--legacy", action=argparse.BooleanOptionalAction, default=None)
     ap.add_argument("--include-aux", action="store_true",
-                    help=f"also serialize SDXL VAE ({VAE_ID}) and LongCLIP")
+                    help=f"also serialize SDXL VAE ({VAE_ID}) and LongCLIP weights")
     ap.add_argument("--repo-layout", action="store_true",
                     help="write under <out>/TerraDiT-Alpha-XL|Sigma-XL|Omega-XL|Omega-B")
+    ap.add_argument("--skeleton", action="store_true",
+                    help="write code + configs only (no transformer/VAE/text-encoder weights)")
     ap.add_argument("--dtype", default="fp16", choices=["fp16", "bf16", "fp32"])
     args = ap.parse_args()
+
+    if args.skeleton:
+        if args.ckpt:
+            raise SystemExit("Use either --skeleton or --ckpt, not both.")
+        if args.family:
+            out = resolve_out_dir(args.out, args.family, args.repo_layout)
+            write_self_contained_repo(out, args.family, arch=args.arch)
+            paths = [out]
+        else:
+            paths = write_repo_skeletons(args.out, repo_layout=True)
+        for path in paths:
+            print(f"[convert] skeleton -> {path}")
+            print("[convert] upload: transformer/diffusion_pytorch_model.safetensors")
+            print("[convert] upload: vae/diffusion_pytorch_model.safetensors")
+            print("[convert] upload: text_encoder/model.safetensors")
+        return
+
+    if not args.ckpt:
+        raise SystemExit("Pass --ckpt PATH or --skeleton.")
 
     if args.ckpt in MODELS and args.family is None:
         args.family = MODELS[args.ckpt]["family"]
@@ -135,7 +155,9 @@ def main() -> None:
         repo_layout=args.repo_layout,
     )
     class_name = PIPELINE_CLASS_NAME[args.family]
+    module = transformer_module_name(args.family)
     print(f"[convert] {args.ckpt} -> {out}")
+    print(f"[convert] custom code: pipeline.py + transformer/{module}.py")
     print(
         f"[convert] load with: DiffusionPipeline.from_pretrained({out!r}, trust_remote_code=True)  "
         f"# or {class_name}.from_pretrained({out!r})"

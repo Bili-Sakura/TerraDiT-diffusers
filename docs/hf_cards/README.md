@@ -49,8 +49,8 @@ pipe = pipe.to("cuda")
 image = pipe("A small town crossed by a river and a road bridge.").images[0]
 ```
 
-A converted Diffusers folder is self-contained (SiT-diffusers layout: `pipeline.py` +
-`transformer/transformer_sit.py`) and loads without installing this repo::
+A converted Diffusers folder is self-contained (one `pipeline.py` +
+`transformer/transformer_terradit_omega.py`) and loads without installing this repo::
 
     from diffusers import DiffusionPipeline
     pipe = DiffusionPipeline.from_pretrained(

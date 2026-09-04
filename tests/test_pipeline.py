@@ -281,19 +281,24 @@ def test_convert_legacy_safetensors(tmp_path):
     convert_checkpoint(str(src), str(dest), family="alpha", arch="SiT-B/2", include_aux=False, dtype=torch.float32)
     assert is_diffusers_pipeline_dir(str(dest))
     assert (dest / "pipeline.py").is_file()
-    assert (dest / "pipeline_common.py").is_file()
+    assert not (dest / "pipeline_common.py").exists()
     assert (dest / "transformer" / "config.json").is_file()
-    assert (dest / "transformer" / "transformer_sit.py").is_file()
-    assert (dest / "transformer" / "sit.py").is_file()
+    assert (dest / "transformer" / "transformer_terradit_alpha.py").is_file()
+    assert not (dest / "transformer" / "sit.py").exists()
+    assert (dest / "vae" / "config.json").is_file()
+    assert (dest / "text_encoder" / "config.json").is_file()
+    assert (dest / "tokenizer" / "tokenizer_config.json").is_file()
     sched_files = os.listdir(dest / "scheduler")
     assert sched_files == ["scheduler_config.json"]
     index = json.loads((dest / "model_index.json").read_text())
     assert index["_class_name"] == ["pipeline", "TerraDiTAlphaPipeline"]
-    assert index["transformer"] == ["transformer_sit", "TerraDiTTransformer2DModel"]
+    assert index["transformer"] == ["transformer_terradit_alpha", "TerraDiTTransformer2DModel"]
     pipeline_src = (dest / "pipeline.py").read_text()
     assert "TerraDiTAlphaPipeline" in pipeline_src
-    assert "from .pipeline_common import" in pipeline_src
-    loaded = TerraDiTAlphaPipeline.from_pretrained(str(dest), vae=_tiny_vae(), trust_remote_code=True)
+    assert "class TerraDiTPipelineBase" in pipeline_src
+    loaded = TerraDiTAlphaPipeline.from_pretrained(
+        str(dest), vae=_tiny_vae(), text_encoder=None, tokenizer=None, trust_remote_code=True,
+    )
     y, yp = _prompt_embeds()
     out = loaded(
         prompt_embeds=y,
@@ -330,7 +335,8 @@ def test_convert_repo_layout_writes_hub_subfolder(tmp_path):
     assert os.path.basename(out) == FAMILY_HUB_SUBFOLDER["sigma"]
     index = json.loads(open(os.path.join(out, "model_index.json")).read())
     assert index["_class_name"] == ["pipeline", "TerraDiTSigmaPipeline"]
-    assert index["transformer"] == ["transformer_sit", "TerraDiTTransformer2DModel"]
+    assert index["transformer"] == ["transformer_terradit_sigma", "TerraDiTTransformer2DModel"]
+    assert (tmp_path / "TerraDiT" / FAMILY_HUB_SUBFOLDER["sigma"] / "transformer" / "transformer_terradit_sigma.py").is_file()
 
 
 def test_resolve_hub_load_defaults_family_subfolder():
@@ -372,6 +378,23 @@ def test_old_inference_modules_removed():
         __import__("terradit.sampling.samplers")
 
 
+def _write_tiny_aux_weights(dest) -> None:
+    """Drop tiny VAE / LongCLIP weights so DiffusionPipeline.from_pretrained can load the folder."""
+    from transformers import CLIPTextConfig, CLIPTextModel
+
+    dest = os.fspath(dest)
+    _tiny_vae().save_pretrained(os.path.join(dest, "vae"))
+    text_cfg = CLIPTextConfig(
+        hidden_size=32,
+        intermediate_size=64,
+        num_hidden_layers=1,
+        num_attention_heads=4,
+        vocab_size=49408,
+        max_position_embeddings=16,
+    )
+    CLIPTextModel(text_cfg).save_pretrained(os.path.join(dest, "text_encoder"))
+
+
 def _write_tiny_legacy(tmp_path, family="alpha"):
     transformer = _tiny_transformer(family)
     src = tmp_path / "legacy"
@@ -399,13 +422,12 @@ def test_converted_folder_has_no_terradit_imports(tmp_path):
 
     py_files = list(dest.rglob("*.py"))
     assert py_files
-    import_re = re.compile(r"^\s*(?:from terradit|import terradit)\b", re.MULTILINE)
+    import_re = re.compile(r"^\s*(?:from terradit|import terradit|from \.)\b", re.MULTILINE)
     for path in py_files:
         text = path.read_text()
-        assert import_re.search(text) is None, f"{path} still imports terradit"
-    assert (dest / "transformer" / "transformer_sit.py").is_file()
-    assert (dest / "transformer" / "localattn.py").is_file()
-    assert (dest / "transformer" / "omega.py").is_file()
+        assert import_re.search(text) is None, f"{path} still has package/relative imports"
+    names = sorted(p.relative_to(dest).as_posix() for p in py_files)
+    assert names == ["pipeline.py", "transformer/transformer_terradit_alpha.py"]
 
 
 def test_converted_folder_loads_via_diffusers_custom_code(tmp_path):
@@ -414,11 +436,8 @@ def test_converted_folder_loads_via_diffusers_custom_code(tmp_path):
     src = _write_tiny_legacy(tmp_path)
     dest = tmp_path / "diffusers"
     convert_checkpoint(str(src), str(dest), family="alpha", arch="SiT-B/2", include_aux=False, dtype=torch.float32)
-    pipe = DiffusionPipeline.from_pretrained(
-        str(dest),
-        trust_remote_code=True,
-        vae=_tiny_vae(),
-    )
+    _write_tiny_aux_weights(dest)
+    pipe = DiffusionPipeline.from_pretrained(str(dest), trust_remote_code=True)
     assert pipe.__class__.__name__ == "TerraDiTAlphaPipeline"
     y, yp = _prompt_embeds()
     out = pipe(
@@ -439,6 +458,7 @@ def test_converted_folder_loads_without_terradit_on_path(tmp_path):
     src = _write_tiny_legacy(tmp_path)
     dest = tmp_path / "diffusers"
     convert_checkpoint(str(src), str(dest), family="alpha", arch="SiT-B/2", include_aux=False, dtype=torch.float32)
+    _write_tiny_aux_weights(dest)
     script = (
         "import os, sys\n"
         "sys.path = [p for p in sys.path if p and 'workspace' not in os.path.abspath(p)]\n"
@@ -466,3 +486,26 @@ def test_converted_folder_loads_without_terradit_on_path(tmp_path):
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "ok" in result.stdout
+
+
+def test_hub_skeleton_writes_family_transformer_module(tmp_path):
+    from terradit.pipelines.hub_export import write_repo_skeletons, write_self_contained_repo
+
+    write_self_contained_repo(tmp_path / "alpha", "alpha", arch="SiT-XL/2")
+    assert (tmp_path / "alpha" / "pipeline.py").is_file()
+    assert (tmp_path / "alpha" / "transformer" / "transformer_terradit_alpha.py").is_file()
+    assert (tmp_path / "alpha" / "vae" / "config.json").is_file()
+    assert (tmp_path / "alpha" / "text_encoder" / "config.json").is_file()
+    index = json.loads((tmp_path / "alpha" / "model_index.json").read_text())
+    assert index["transformer"] == ["transformer_terradit_alpha", "TerraDiTTransformer2DModel"]
+    assert index["vae"] == ["diffusers", "AutoencoderKL"]
+    assert index["text_encoder"] == ["transformers", "CLIPTextModel"]
+    assert not list((tmp_path / "alpha").rglob("*.safetensors"))
+
+    paths = write_repo_skeletons(tmp_path / "repo")
+    names = {os.path.basename(p) for p in paths}
+    assert names == set(FAMILY_HUB_SUBFOLDER.values()) | {"TerraDiT-Omega-B"}
+    assert (tmp_path / "repo" / "TerraDiT-Omega-B" / "transformer" / "transformer_terradit_omega.py").is_file()
+    omega_cfg = json.loads((tmp_path / "repo" / "TerraDiT-Omega-B" / "transformer" / "config.json").read_text())
+    assert omega_cfg["arch"] == "SiT-B/2"
+    assert omega_cfg["family"] == "omega"
