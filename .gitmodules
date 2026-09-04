@@ -1,0 +1,3 @@
+[submodule "terradit/RANGE"]
+	path = terradit/RANGE
+	url = https://github.com/mvrl/RANGE.git

@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "terradit"
+version = "1.0.0"
+description = "TerraDiT / TerraDiT-Omega: diffusion transformers for satellite image synthesis with text, geolocation, points, and geospatial primitives"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+authors = [
+  { name = "Brian Wei" },
+  { name = "Srikumar Sastry" },
+  { name = "Daniel Cher" },
+]
+dependencies = [
+  "torch>=2.4",
+  "torchvision",
+  "diffusers>=0.30",
+  "transformers>=4.44",
+  "accelerate>=1.0",
+  "datasets>=3.0",
+  "huggingface_hub>=0.25",
+  "safetensors>=0.4",
+  "timm",
+  "einops",
+  "numpy",
+  "pillow",
+  "tqdm",
+  "pyyaml",
+  "ftfy",
+  "regex",
+]
+
+[project.optional-dependencies]
+train = ["wandb"]
+eval = ["torchmetrics[image]", "torch-fidelity", "scipy"]
+dev = ["pytest"]
+
+[project.urls]
+Homepage = "https://github.com/mvrl/TerraDiT"
+Models = "https://huggingface.co/MVRL/TerraDiT"
+Data = "https://huggingface.co/datasets/MVRL/TerraDiT-data"
+
+[tool.setuptools.packages.find]
+include = ["terradit*"]
+exclude = ["terradit.RANGE*"]

@@ -1,0 +1,8 @@
+# accelerate launch --config_file configs/accelerate_1gpu.yaml terradit/train.py ...
+compute_environment: LOCAL_MACHINE
+distributed_type: 'NO'
+mixed_precision: fp16
+num_processes: 1
+num_machines: 1
+gpu_ids: '0'
+use_cpu: false

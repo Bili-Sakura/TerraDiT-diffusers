@@ -1,0 +1,23 @@
+# Mirrors pyproject.toml; prefer `pip install -e .` (add `.[train]` / `.[eval]` as needed).
+torch>=2.4
+torchvision
+diffusers>=0.30
+transformers>=4.44
+accelerate>=1.0
+datasets>=3.0
+huggingface_hub>=0.25
+safetensors>=0.4
+timm
+einops
+numpy
+pillow
+tqdm
+pyyaml
+ftfy
+regex
+# training
+wandb
+# evaluation
+torchmetrics[image]
+torch-fidelity
+scipy

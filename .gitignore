@@ -46,5 +46,14 @@ points.pack
 # Jupyter
 .ipynb_checkpoints/
 
-# local debugging scripts (reference REPA paths; not for release)
+# local debugging scripts
 dev/
+
+# release staging (exported weights, upload staging)
+release/
+
+# cluster-only staging scripts (hardcoded /projects paths)
+scripts/cluster/
+
+# internal release checklist
+docs/RELEASE_PLAN.md
