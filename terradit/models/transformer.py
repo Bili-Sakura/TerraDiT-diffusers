@@ -14,6 +14,10 @@
 
 """Diffusers ``ModelMixin`` wrapper around the TerraDiT SiT backbone.
 
+The layout follows ``BiliSakura/SiT-diffusers`` (``SiTTransformer2DModel`` in
+``transformer_sit.py``): this file is copied into a converted folder as
+``transformer/transformer_sit.py`` and must stay free of ``terradit`` imports.
+
 The wrapped module keeps the original SiT state-dict key names so released
 ``model.safetensors`` files load without remapping. Construction flags live in
 the Diffusers config and are written by ``save_pretrained``.
@@ -27,13 +31,15 @@ import torch
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
-from diffusers.utils import logging
 
-from terradit.families import FAMILY_CONSTRUCT
-from terradit.hf import MODELS, load_weights, resolve_checkpoint
-from terradit.models.sit import SiT, SiT_models
+from .sit import SiT, SiT_models
 
-logger = logging.get_logger(__name__)
+# Inlined from ``terradit.families`` so a Hub copy of this file is self-contained.
+_FAMILY_CONSTRUCT = {
+    "alpha": dict(condition_type="text", geolocation=False, point_prompts=False, omega=False, legacy=False),
+    "sigma": dict(condition_type="text", geolocation=True, point_prompts=True, omega=False, legacy=False),
+    "omega": dict(condition_type="text", geolocation=True, point_prompts=False, omega=True, legacy=False),
+}
 
 # Attributes copied off the constructed SiT so ``SiT.forward`` can run on this instance.
 _SIT_ATTRS = (
@@ -71,11 +77,11 @@ def _build_sit(
     fused_attn: bool,
     qk_norm: bool,
 ) -> SiT:
-    if family not in FAMILY_CONSTRUCT:
-        raise ValueError(f"unknown family {family!r}; expected one of {sorted(FAMILY_CONSTRUCT)}")
+    if family not in _FAMILY_CONSTRUCT:
+        raise ValueError(f"unknown family {family!r}; expected one of {sorted(_FAMILY_CONSTRUCT)}")
     if arch not in SiT_models:
         raise ValueError(f"unknown arch {arch!r}; expected one of {sorted(SiT_models)}")
-    construct = dict(FAMILY_CONSTRUCT[family])
+    construct = dict(_FAMILY_CONSTRUCT[family])
     construct["legacy"] = legacy
     return SiT_models[arch](
         input_size=input_size,
@@ -227,88 +233,3 @@ class TerraDiTTransformer2DModel(ModelMixin, ConfigMixin):
         if not return_dict:
             return (sample, zs)
         return Transformer2DModelOutput(sample=sample)
-
-    @classmethod
-    def from_legacy_checkpoint(
-        cls,
-        name_or_path: str,
-        *,
-        family: str | None = None,
-        arch: str | None = None,
-        checkpoints_root: str = "checkpoints",
-        legacy: bool | None = None,
-        loc_dim: int | None = None,
-        omega_attn: str | None = None,
-        encoder_depth: int | None = None,
-        resolution: int | None = None,
-        num_classes: int | None = None,
-        torch_dtype: torch.dtype | None = None,
-    ) -> "TerraDiTTransformer2DModel":
-        r"""
-        Build the transformer from a release name, safetensors directory/file, or training `.pt`.
-
-        Parameters:
-            name_or_path (`str`):
-                Release name (`omega_xl`), a directory with `model.safetensors`, or a file path.
-            family / arch:
-                Override construction flags when the sidecar config does not provide them.
-            checkpoints_root (`str`):
-                Local cache directory used when `name_or_path` is a release name.
-            legacy, loc_dim, omega_attn, encoder_depth, resolution, num_classes:
-                Optional overrides of the release config.
-            torch_dtype (`torch.dtype`, *optional*):
-                Cast floating weights after load.
-
-        Returns:
-            [`TerraDiTTransformer2DModel`]:
-                Transformer in eval mode with released EMA weights.
-        """
-        path = resolve_checkpoint(name_or_path, checkpoints_root)
-        sd, config = load_weights(path)
-        config = dict(config or {})
-        if name_or_path in MODELS:
-            config = {**MODELS[name_or_path], **config}
-
-        family = family or config.get("family")
-        arch = arch or config.get("arch")
-        if family is None or arch is None:
-            raise ValueError(f"family/arch not given and not found in a config next to {path}")
-
-        resolution = resolution if resolution is not None else int(config.get("resolution", 256))
-        input_size = resolution // 8
-        geo_dim = loc_dim if loc_dim is not None else int(config.get("loc_dim", config.get("geolocation_dim", 1280)))
-        model = cls(
-            family=family,
-            arch=arch,
-            input_size=input_size,
-            sample_size=input_size,
-            resolution=resolution,
-            num_classes=num_classes if num_classes is not None else int(config.get("num_classes", 1000)),
-            encoder_depth=encoder_depth if encoder_depth is not None else int(config.get("encoder_depth", 8)),
-            geolocation_dim=geo_dim,
-            loc_dim=geo_dim,
-            omega_attn=omega_attn or config.get("omega_attn", "GALA"),
-            legacy=config.get("legacy", False) if legacy is None else legacy,
-            use_repa=False,
-            use_cfg=False,
-        )
-        sd = {k: v.to(torch.float32) if v.is_floating_point() else v for k, v in sd.items()}
-        result = model.load_state_dict(sd, strict=False)
-        missing = [k for k in result.missing_keys if not k.startswith("projectors")]
-        logger.info(
-            "Loaded %s (%s, %s, legacy=%s): missing=%s unexpected=%s",
-            path,
-            family,
-            arch,
-            model.config.legacy,
-            len(missing),
-            len(result.unexpected_keys),
-        )
-        if missing:
-            logger.warning("First missing keys: %s", missing[:8])
-        if result.unexpected_keys:
-            logger.warning("First unexpected keys: %s", result.unexpected_keys[:8])
-        if torch_dtype is not None:
-            model = model.to(dtype=torch_dtype)
-        model.eval()
-        return model

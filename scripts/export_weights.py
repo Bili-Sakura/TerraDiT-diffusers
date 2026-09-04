@@ -25,13 +25,13 @@ SOURCES = {}   # name -> training checkpoint path; pass with --source name=path
 
 def verify(name, src_path, out_path, config, device):
     """Same random input through original-EMA fp32 model and exported fp16 weights (cast to fp32)."""
-    from terradit.models.transformer import TerraDiTTransformer2DModel
+    from terradit.models.legacy import load_legacy_transformer
     torch.manual_seed(0)
     fam, arch = config["family"], config["arch"]
-    ref = TerraDiTTransformer2DModel.from_legacy_checkpoint(
+    ref = load_legacy_transformer(
         src_path, family=fam, arch=arch, legacy=config["legacy"],
         loc_dim=config["loc_dim"], omega_attn=config["omega_attn"])
-    new = TerraDiTTransformer2DModel.from_legacy_checkpoint(
+    new = load_legacy_transformer(
         out_path, family=fam, arch=arch, legacy=config["legacy"],
         loc_dim=config["loc_dim"], omega_attn=config["omega_attn"])
     ref = ref.to(device)

@@ -1,15 +1,28 @@
 """Convert TerraDiT release / training checkpoints to a Diffusers pipeline folder.
 
 Each output directory is a self-contained family variant that
-``TerraDiTAlphaPipeline.from_pretrained`` / ``DiffusionPipeline.from_pretrained``
-can load. Hub layout::
+``DiffusionPipeline.from_pretrained(..., trust_remote_code=True)`` can load
+without installing this repository. Layout matches ``BiliSakura/SiT-diffusers``::
+
+    TerraDiT-Alpha-XL/
+      model_index.json          # _class_name=["pipeline", "TerraDiTAlphaPipeline"]
+      pipeline.py               # family pipeline (relative imports only)
+      pipeline_common.py
+      pipeline_conditioning.py
+      constants.py
+      scheduler/scheduler_config.json
+      transformer/
+        config.json
+        diffusion_pytorch_model.safetensors
+        transformer_sit.py      # TerraDiTTransformer2DModel
+        sit.py localattn.py omega.py
+
+Hub layout::
 
     BiliSakura/TerraDiT/TerraDiT-Alpha-XL
     BiliSakura/TerraDiT/TerraDiT-Sigma-XL
     BiliSakura/TerraDiT/TerraDiT-Omega-XL
     BiliSakura/TerraDiT/TerraDiT-Omega-B
-
-The scheduler folder contains only ``scheduler_config.json``.
 
     # released Hub weights (auto-download) -> family folder
     python scripts/convert_to_diffusers.py --ckpt omega_xl --out release/TerraDiT-Omega-XL
@@ -23,89 +36,24 @@ The scheduler folder contains only ``scheduler_config.json``.
 
     # include SDXL VAE + LongCLIP so the folder is one-stop
     python scripts/convert_to_diffusers.py --ckpt alpha_xl --out release/TerraDiT-Alpha-XL --include-aux
-
-Without ``--include-aux`` the folder holds the transformer, scheduler, model_index,
-and a ``pipeline.py`` re-export. ``from_pretrained`` then loads the VAE and LongCLIP
-via ``_ensure_aux`` when they are not serialized.
 """
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
 
-import diffusers
 import torch
 from diffusers.models import AutoencoderKL
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 from transformers import AutoTokenizer, CLIPTextModel
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from terradit.data.dataset import TOKENIZER_ID
 from terradit.hf import FAMILY_HUB_SUBFOLDER, MODELS, VARIANT_HUB_SUBFOLDER, VAE_ID
-from terradit.models.transformer import TerraDiTTransformer2DModel
-from terradit.pipelines.pipeline_common import PIPELINE_CLASS_NAME, PIPELINE_MODULE, pipeline_class_for_family
-
-
-def _pipeline_py(family: str) -> str:
-    class_name = PIPELINE_CLASS_NAME[family]
-    module = PIPELINE_MODULE[family]
-    return f'''# Copyright 2026 The TerraDiT Authors. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-"""Custom Diffusers pipeline entry point for a converted TerraDiT-{family} folder.
-
-Install the ``terradit`` package, then load with::
-
-    from terradit import {class_name}
-    pipe = {class_name}.from_pretrained(
-        "BiliSakura/TerraDiT",
-        subfolder="{FAMILY_HUB_SUBFOLDER[family]}",
-    )
-
-    # or
-    from diffusers import DiffusionPipeline
-    pipe = DiffusionPipeline.from_pretrained(
-        model_dir,
-        custom_pipeline=f"{{model_dir}}/pipeline.py",
-        trust_remote_code=True,
-    )
-"""
-
-from {module} import {class_name}
-
-__all__ = ["{class_name}"]
-'''
-
-
-def _write_model_index(out_dir: str, family: str, include_aux: bool) -> None:
-    index = {
-        "_class_name": PIPELINE_CLASS_NAME[family],
-        "_diffusers_version": diffusers.__version__,
-        "scheduler": ["diffusers", "FlowMatchEulerDiscreteScheduler"],
-        "transformer": ["terradit.models.transformer", "TerraDiTTransformer2DModel"],
-    }
-    if include_aux:
-        index.update(
-            vae=["diffusers", "AutoencoderKL"],
-            text_encoder=["transformers", "CLIPTextModel"],
-            tokenizer=["transformers", "CLIPTokenizer"],
-        )
-    with open(os.path.join(out_dir, "model_index.json"), "w") as f:
-        json.dump(index, f, indent=2)
-        f.write("\n")
+from terradit.models.legacy import load_legacy_transformer
+from terradit.pipelines.constants import PIPELINE_CLASS_NAME, TOKENIZER_ID
+from terradit.pipelines.hub_export import write_self_contained_repo
+from terradit.pipelines.pipeline_terradit import pipeline_class_for_family
 
 
 def resolve_out_dir(out_dir: str, family: str, repo_layout: bool, variant: str | None = None) -> str:
@@ -137,7 +85,7 @@ def convert_checkpoint(
 
     out_dir = resolve_out_dir(out_dir, family, repo_layout, variant=ckpt if ckpt in VARIANT_HUB_SUBFOLDER else None)
     os.makedirs(out_dir, exist_ok=True)
-    transformer = TerraDiTTransformer2DModel.from_legacy_checkpoint(
+    transformer = load_legacy_transformer(
         ckpt, family=family, arch=arch, legacy=legacy, torch_dtype=dtype,
     )
     scheduler = FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, shift=1.0)
@@ -158,11 +106,8 @@ def convert_checkpoint(
             tokenizer=AutoTokenizer.from_pretrained(TOKENIZER_ID),
         )
         pipe.save_pretrained(out_dir, safe_serialization=True)
-    else:
-        _write_model_index(out_dir, family, include_aux=False)
 
-    with open(os.path.join(out_dir, "pipeline.py"), "w") as f:
-        f.write(_pipeline_py(family))
+    write_self_contained_repo(out_dir, family)
     return out_dir
 
 
@@ -191,7 +136,10 @@ def main() -> None:
     )
     class_name = PIPELINE_CLASS_NAME[args.family]
     print(f"[convert] {args.ckpt} -> {out}")
-    print(f"[convert] load with: {class_name}.from_pretrained({out!r})")
+    print(
+        f"[convert] load with: DiffusionPipeline.from_pretrained({out!r}, trust_remote_code=True)  "
+        f"# or {class_name}.from_pretrained({out!r})"
+    )
 
 
 if __name__ == "__main__":

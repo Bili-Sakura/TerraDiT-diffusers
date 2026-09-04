@@ -14,6 +14,13 @@ import json
 
 import torch
 
+from terradit.pipelines.constants import (
+    DIFFUSERS_REPO,
+    FAMILY_HUB_SUBFOLDER,
+    VARIANT_HUB_SUBFOLDER,
+    VAE_ID,
+)
+
 # --------------------------------------------------------------------------- #
 # Pinned repositories
 # --------------------------------------------------------------------------- #
@@ -21,22 +28,6 @@ GIT10M_REPO = "lcybuaa/Git-10M"
 GIT10M_REVISION = "29f192b8d2aa28b5d4d8c8d7f0f608cdc61fb52f"   # 2025-06-28, 10,503,567 rows
 MODEL_REPO = "MVRL/TerraDiT"
 DATA_REPO = "MVRL/TerraDiT-data"
-VAE_ID = "stabilityai/sdxl-vae"
-
-# Diffusers-format Hub repo (one folder per family pipeline).
-DIFFUSERS_REPO = "BiliSakura/TerraDiT"
-FAMILY_HUB_SUBFOLDER = {
-    "alpha": "TerraDiT-Alpha-XL",
-    "sigma": "TerraDiT-Sigma-XL",
-    "omega": "TerraDiT-Omega-XL",
-}
-# Release name -> Hub subfolder (omega_base is the SiT-B/2 Ω variant).
-VARIANT_HUB_SUBFOLDER = {
-    "alpha_xl": "TerraDiT-Alpha-XL",
-    "sigma_xl": "TerraDiT-Sigma-XL",
-    "omega_xl": "TerraDiT-Omega-XL",
-    "omega_base": "TerraDiT-Omega-B",
-}
 
 # Released weights: name -> construction spec (also stored in each config.json).
 MODELS = {

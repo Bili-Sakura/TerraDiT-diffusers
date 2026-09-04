@@ -33,15 +33,20 @@ from diffusers.schedulers import FlowMatchEulerDiscreteScheduler, KarrasDiffusio
 from diffusers.utils import deprecate, logging
 from diffusers.utils.torch_utils import randn_tensor
 
-from terradit.conditioning import OMEGA_CONDITION_DROPOUTS, build_conditioning, loc_embed_from_latlon, load_range_model
-from terradit.data.dataset import CAPTION_MAX_LEN, TOKENIZER_ID
-from terradit.hf import (
+from .constants import (
+    CAPTION_MAX_LEN,
     DIFFUSERS_REPO,
     FAMILY_HUB_SUBFOLDER,
+    TOKENIZER_ID,
     VARIANT_HUB_SUBFOLDER,
     VAE_ID,
 )
-from terradit.models.transformer import TerraDiTTransformer2DModel
+from .pipeline_conditioning import (
+    OMEGA_CONDITION_DROPOUTS,
+    build_conditioning,
+    loc_embed_from_latlon,
+    load_range_model,
+)
 
 try:
     from diffusers.utils import is_torch_xla_available
@@ -57,17 +62,6 @@ else:
     XLA_AVAILABLE = False
 
 logger = logging.get_logger(__name__)
-
-PIPELINE_CLASS_NAME = {
-    "alpha": "TerraDiTAlphaPipeline",
-    "sigma": "TerraDiTSigmaPipeline",
-    "omega": "TerraDiTOmegaPipeline",
-}
-PIPELINE_MODULE = {
-    "alpha": "terradit.pipelines.pipeline_terradit_alpha",
-    "sigma": "terradit.pipelines.pipeline_terradit_sigma",
-    "omega": "terradit.pipelines.pipeline_terradit_omega",
-}
 
 
 def paper_flow_sigmas(num_inference_steps: int) -> list[float]:
@@ -148,23 +142,6 @@ def flow_match_euler_denoise(
     return latents
 
 
-def pipeline_class_for_family(family: str):
-    """Return the family pipeline class (`TerraDiTAlphaPipeline`, …)."""
-    from terradit.pipelines.pipeline_terradit_alpha import TerraDiTAlphaPipeline
-    from terradit.pipelines.pipeline_terradit_omega import TerraDiTOmegaPipeline
-    from terradit.pipelines.pipeline_terradit_sigma import TerraDiTSigmaPipeline
-
-    key = (family or "alpha").lower()
-    try:
-        return {
-            "alpha": TerraDiTAlphaPipeline,
-            "sigma": TerraDiTSigmaPipeline,
-            "omega": TerraDiTOmegaPipeline,
-        }[key]
-    except KeyError as exc:
-        raise ValueError(f"unknown TerraDiT family {family!r}") from exc
-
-
 def resolve_hub_load(pretrained_model_name_or_path: str | os.PathLike | None, subfolder: str | None, default_subfolder: str):
     """Default ``subfolder`` when loading ``BiliSakura/TerraDiT`` from the Hub."""
     if pretrained_model_name_or_path is None:
@@ -196,7 +173,7 @@ class TerraDiTPipelineBase(DiffusionPipeline):
 
     def __init__(
         self,
-        transformer: TerraDiTTransformer2DModel,
+        transformer,
         scheduler: KarrasDiffusionSchedulers | FlowMatchEulerDiscreteScheduler,
         vae: AutoencoderKL | None = None,
         text_encoder: CLIPTextModel | None = None,
@@ -243,6 +220,7 @@ class TerraDiTPipelineBase(DiffusionPipeline):
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path: str | os.PathLike | None = None, **kwargs):
         """Load a Diffusers folder. Hub ids default to this family's ``hub_subfolder``."""
+        kwargs.setdefault("trust_remote_code", True)
         subfolder = kwargs.pop("subfolder", None)
         pretrained_model_name_or_path, subfolder = resolve_hub_load(
             pretrained_model_name_or_path, subfolder, cls.hub_subfolder

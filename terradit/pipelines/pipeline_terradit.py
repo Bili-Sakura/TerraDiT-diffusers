@@ -18,11 +18,24 @@ from terradit.pipelines.pipeline_common import (
     TerraDiTPipelineBase,
     flow_match_euler_denoise,
     paper_flow_sigmas,
-    pipeline_class_for_family,
 )
 from terradit.pipelines.pipeline_terradit_alpha import TerraDiTAlphaPipeline
 from terradit.pipelines.pipeline_terradit_omega import TerraDiTOmegaPipeline
 from terradit.pipelines.pipeline_terradit_sigma import TerraDiTSigmaPipeline
+
+
+def pipeline_class_for_family(family: str):
+    """Return the family pipeline class (`TerraDiTAlphaPipeline`, …)."""
+    key = (family or "alpha").lower()
+    try:
+        return {
+            "alpha": TerraDiTAlphaPipeline,
+            "sigma": TerraDiTSigmaPipeline,
+            "omega": TerraDiTOmegaPipeline,
+        }[key]
+    except KeyError as exc:
+        raise ValueError(f"unknown TerraDiT family {family!r}") from exc
+
 
 __all__ = [
     "TerraDiTAlphaPipeline",

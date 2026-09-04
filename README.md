@@ -85,7 +85,9 @@ Inference uses one Diffusers pipeline class per family
 with `FlowMatchEulerDiscreteScheduler` (100 Euler steps, no CFG, SDXL VAE).
 Converted folders live on [BiliSakura/TerraDiT](https://huggingface.co/BiliSakura/TerraDiT)
 as `TerraDiT-Alpha-XL` / `TerraDiT-Sigma-XL` / `TerraDiT-Omega-XL` / `TerraDiT-Omega-B`.
-Convert a training checkpoint with
+Each folder is a self-contained [SiT-diffusers](https://huggingface.co/BiliSakura/SiT-diffusers)-style
+repo (`pipeline.py` + `transformer/transformer_sit.py`) and loads without installing this
+package. Convert a training checkpoint with
 `python scripts/convert_to_diffusers.py --ckpt omega_xl --out release/TerraDiT --repo-layout`.
 
 Coordinates below are tile pixels in `[0, 256)`, x to the right and y down. Tags follow
@@ -97,10 +99,16 @@ positional embeddings.
 
 ```python
 import torch
-from terradit import TerraDiTAlphaPipeline
+from diffusers import DiffusionPipeline
 
-pipe = TerraDiTAlphaPipeline.from_pretrained("BiliSakura/TerraDiT", subfolder="TerraDiT-Alpha-XL")
-pipe = pipe.to("cuda")
+# no `terradit` install required (SiT-diffusers-style folder)
+pipe = DiffusionPipeline.from_pretrained(
+    "BiliSakura/TerraDiT",
+    subfolder="TerraDiT-Alpha-XL",
+    trust_remote_code=True,
+).to("cuda")
+# or: from terradit import TerraDiTAlphaPipeline
+# pipe = TerraDiTAlphaPipeline.from_pretrained("BiliSakura/TerraDiT", subfolder="TerraDiT-Alpha-XL")
 image = pipe(
     prompt="The satellite image shows a coastal town with a marina and red-roofed houses.",
     height=256,
@@ -191,9 +199,6 @@ python terradit/omega_demo.py --subfolder TerraDiT-Omega-B --condition-type box
 ```
 
 Each demo writes 4 samples plus an overlay of the conditioning to `samples/<family>/`.
-Coordinates are tile pixels in `[0, 256)`, x to the right and y down. Instances are
-`{"type": "polygon|polyline|bbox|point", "coords": [[x, y], ...], "tag": "building house"}`;
-tags follow the OSM `"<key> <value>"` convention (vocabulary in `osm/tag_vocab.pt`).
 
 **Geolocation.** With `--lat/--lon` the [RANGE+](https://github.com/mvrl/RANGE) submodule
 (`terradit/RANGE`; run `git submodule update --init` if you cloned without `--recursive`)
@@ -209,11 +214,13 @@ Hub. Without coordinates, or with `--no-range`, a zero embedding is used.
 | Imagery | [lcybuaa/Git-10M](https://huggingface.co/datasets/lcybuaa/Git-10M) @ `29f192b8` | `data/git10m/hf/` | `python -c "from terradit.hf import load_git10m; load_git10m('data/git10m/hf')"` |
 
 All released weights are EMA, fp16 safetensors with a `config.json` beside them; every family
-shares one SiT backbone (`terradit/models/sit.py`) and the Diffusers flow-matching Euler
-scheduler (100 steps, no classifier-free guidance). Convert them to a one-stop Diffusers
-folder (`transformer/`, `scheduler/scheduler_config.json`, `model_index.json`, `pipeline.py`)
-with `scripts/convert_to_diffusers.py` (`--repo-layout` writes `TerraDiT-Alpha-XL` / `TerraDiT-Sigma-XL` /
-`TerraDiT-Omega-XL` / `TerraDiT-Omega-B`; `--include-aux` also writes the SDXL VAE and LongCLIP).
+shares one SiT backbone (`terradit/models/sit.py`, shipped on the Hub as
+`transformer/transformer_sit.py` like [SiT-diffusers](https://huggingface.co/BiliSakura/SiT-diffusers))
+and the Diffusers flow-matching Euler scheduler (100 steps, no classifier-free guidance).
+Convert them to a one-stop Diffusers folder (`pipeline.py`, `transformer/transformer_sit.py`,
+`scheduler/scheduler_config.json`, `model_index.json`) with `scripts/convert_to_diffusers.py`
+(`--repo-layout` writes `TerraDiT-Alpha-XL` / `TerraDiT-Sigma-XL` / `TerraDiT-Omega-XL` /
+`TerraDiT-Omega-B`; `--include-aux` also writes the SDXL VAE and LongCLIP).
 The derived data (tile ids + coordinates + `hf_idx`, OSM point rasters, instance geometry,
 RANGE+ embeddings, test splits) mirrors the layout the code expects; see
 [docs/DATA.md](docs/DATA.md) for the layout, provenance, and custom data.

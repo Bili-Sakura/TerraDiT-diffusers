@@ -22,8 +22,8 @@ import torch
 from diffusers.pipelines.pipeline_utils import ImagePipelineOutput
 from diffusers.utils import replace_example_docstring
 
-from terradit.hf import DIFFUSERS_REPO, FAMILY_HUB_SUBFOLDER, VARIANT_HUB_SUBFOLDER
-from terradit.pipelines.pipeline_common import TerraDiTPipelineBase
+from .constants import DIFFUSERS_REPO, FAMILY_HUB_SUBFOLDER, VARIANT_HUB_SUBFOLDER
+from .pipeline_common import TerraDiTPipelineBase
 
 EXAMPLE_DOC_STRING = r"""
     Examples:
@@ -64,7 +64,6 @@ EXAMPLE_DOC_STRING = r"""
         >>> pipe = DiffusionPipeline.from_pretrained(
         ...     "BiliSakura/TerraDiT",
         ...     subfolder="TerraDiT-Omega-XL",
-        ...     custom_pipeline="pipeline.py",
         ...     trust_remote_code=True,
         ... )
         ```

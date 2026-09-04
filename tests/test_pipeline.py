@@ -17,9 +17,9 @@ from terradit.models.transformer import TerraDiTTransformer2DModel
 from terradit.pipelines.pipeline_common import (
     flow_match_euler_denoise,
     paper_flow_sigmas,
-    pipeline_class_for_family,
     resolve_hub_load,
 )
+from terradit.pipelines.pipeline_terradit import pipeline_class_for_family
 from terradit.pipelines.pipeline_terradit_alpha import TerraDiTAlphaPipeline
 from terradit.pipelines.pipeline_terradit_omega import TerraDiTOmegaPipeline
 from terradit.pipelines.pipeline_terradit_sigma import TerraDiTSigmaPipeline
@@ -255,6 +255,9 @@ def test_omega_tensor_conditioning():
     )
     out = pipe(**kw)
     assert out.images.shape[0] == 1
+    kw["height"] = kw["width"] = 64
+    out64 = pipe(**kw)
+    assert out64.images.shape == (1, 4, 8, 8)
 
 
 def test_convert_legacy_safetensors(tmp_path):
@@ -278,14 +281,19 @@ def test_convert_legacy_safetensors(tmp_path):
     convert_checkpoint(str(src), str(dest), family="alpha", arch="SiT-B/2", include_aux=False, dtype=torch.float32)
     assert is_diffusers_pipeline_dir(str(dest))
     assert (dest / "pipeline.py").is_file()
+    assert (dest / "pipeline_common.py").is_file()
     assert (dest / "transformer" / "config.json").is_file()
+    assert (dest / "transformer" / "transformer_sit.py").is_file()
+    assert (dest / "transformer" / "sit.py").is_file()
     sched_files = os.listdir(dest / "scheduler")
     assert sched_files == ["scheduler_config.json"]
     index = json.loads((dest / "model_index.json").read_text())
-    assert index["_class_name"] == "TerraDiTAlphaPipeline"
+    assert index["_class_name"] == ["pipeline", "TerraDiTAlphaPipeline"]
+    assert index["transformer"] == ["transformer_sit", "TerraDiTTransformer2DModel"]
     pipeline_src = (dest / "pipeline.py").read_text()
     assert "TerraDiTAlphaPipeline" in pipeline_src
-    loaded = TerraDiTAlphaPipeline.from_pretrained(str(dest), vae=_tiny_vae())
+    assert "from .pipeline_common import" in pipeline_src
+    loaded = TerraDiTAlphaPipeline.from_pretrained(str(dest), vae=_tiny_vae(), trust_remote_code=True)
     y, yp = _prompt_embeds()
     out = loaded(
         prompt_embeds=y,
@@ -321,7 +329,8 @@ def test_convert_repo_layout_writes_hub_subfolder(tmp_path):
     )
     assert os.path.basename(out) == FAMILY_HUB_SUBFOLDER["sigma"]
     index = json.loads(open(os.path.join(out, "model_index.json")).read())
-    assert index["_class_name"] == "TerraDiTSigmaPipeline"
+    assert index["_class_name"] == ["pipeline", "TerraDiTSigmaPipeline"]
+    assert index["transformer"] == ["transformer_sit", "TerraDiTTransformer2DModel"]
 
 
 def test_resolve_hub_load_defaults_family_subfolder():
@@ -361,3 +370,99 @@ def test_old_inference_modules_removed():
         __import__("terradit.generation")
     with pytest.raises(ModuleNotFoundError):
         __import__("terradit.sampling.samplers")
+
+
+def _write_tiny_legacy(tmp_path, family="alpha"):
+    transformer = _tiny_transformer(family)
+    src = tmp_path / "legacy"
+    src.mkdir()
+    sd = {k: v.contiguous().half() if v.is_floating_point() else v for k, v in transformer.state_dict().items()}
+    save_file(sd, src / "model.safetensors")
+    (src / "config.json").write_text(json.dumps({
+        "family": family,
+        "arch": "SiT-B/2",
+        "legacy": False,
+        "loc_dim": 1280,
+        "omega_attn": "GALA",
+        "encoder_depth": 2,
+        "resolution": 32,
+        "num_classes": 1000,
+    }))
+    return src
+
+
+def test_converted_folder_has_no_terradit_imports(tmp_path):
+    src = _write_tiny_legacy(tmp_path)
+    dest = tmp_path / "diffusers"
+    convert_checkpoint(str(src), str(dest), family="alpha", arch="SiT-B/2", include_aux=False, dtype=torch.float32)
+    import re
+
+    py_files = list(dest.rglob("*.py"))
+    assert py_files
+    import_re = re.compile(r"^\s*(?:from terradit|import terradit)\b", re.MULTILINE)
+    for path in py_files:
+        text = path.read_text()
+        assert import_re.search(text) is None, f"{path} still imports terradit"
+    assert (dest / "transformer" / "transformer_sit.py").is_file()
+    assert (dest / "transformer" / "localattn.py").is_file()
+    assert (dest / "transformer" / "omega.py").is_file()
+
+
+def test_converted_folder_loads_via_diffusers_custom_code(tmp_path):
+    from diffusers import DiffusionPipeline
+
+    src = _write_tiny_legacy(tmp_path)
+    dest = tmp_path / "diffusers"
+    convert_checkpoint(str(src), str(dest), family="alpha", arch="SiT-B/2", include_aux=False, dtype=torch.float32)
+    pipe = DiffusionPipeline.from_pretrained(
+        str(dest),
+        trust_remote_code=True,
+        vae=_tiny_vae(),
+    )
+    assert pipe.__class__.__name__ == "TerraDiTAlphaPipeline"
+    y, yp = _prompt_embeds()
+    out = pipe(
+        prompt_embeds=y,
+        pooled_prompt_embeds=yp,
+        height=32,
+        width=32,
+        num_inference_steps=2,
+        output_type="latent",
+    )
+    assert out.images.shape == (1, 4, 4, 4)
+
+
+def test_converted_folder_loads_without_terradit_on_path(tmp_path):
+    import subprocess
+    import sys
+
+    src = _write_tiny_legacy(tmp_path)
+    dest = tmp_path / "diffusers"
+    convert_checkpoint(str(src), str(dest), family="alpha", arch="SiT-B/2", include_aux=False, dtype=torch.float32)
+    script = (
+        "import os, sys\n"
+        "sys.path = [p for p in sys.path if p and 'workspace' not in os.path.abspath(p)]\n"
+        "try:\n"
+        "    import terradit\n"
+        "except ImportError:\n"
+        "    terradit = None\n"
+        "else:\n"
+        "    raise SystemExit(f'terradit still importable from {terradit.__file__}')\n"
+        "from diffusers import DiffusionPipeline\n"
+        f"pipe = DiffusionPipeline.from_pretrained({str(dest)!r}, trust_remote_code=True, local_files_only=True)\n"
+        "assert pipe.__class__.__name__ == 'TerraDiTAlphaPipeline'\n"
+        "assert pipe.transformer.config.family == 'alpha'\n"
+        "print('ok')\n"
+    )
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=str(tmp_path),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "ok" in result.stdout
