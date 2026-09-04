@@ -215,7 +215,7 @@ class SiTBlock(nn.Module):
     def forward(self, x, c, point_prompts=None, pos=None, mask=None, t=None, 
                 inst_tokens=None, polygon_xy=None, polygon_xy_mask=None,
                 polyline_xy=None, polyline_xy_mask=None, bbox_xyxy=None, 
-                point_xy=None, format_mask=None, instance_mask=None):
+                point_xy=None, format_mask=None, instance_mask=None, grid_size=None):
         
         if self.condition=='class' or self.condition=='unconditional':
             shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
@@ -235,7 +235,7 @@ class SiTBlock(nn.Module):
             x = x + self.cross_attn(x, c)
             if self.point_prompts:
                 if self.local_attn_flag:
-                    x = x + self.local_attn(x, point_prompts, pos, mask)
+                    x = x + self.local_attn(x, point_prompts, pos, mask, grid_size=grid_size)
                 else:
                     x = x + self.local_attn(x, point_prompts, mask)
             if self.omega:
@@ -384,19 +384,21 @@ class SiT(nn.Module):
         nn.init.constant_(self.final_layer.linear.weight, 0)
         nn.init.constant_(self.final_layer.linear.bias, 0)
 
-    def unpatchify(self, x, patch_size=None):
+    def unpatchify(self, x, patch_size=None, grid_h=None, grid_w=None):
         """
         x: (N, T, patch_size**2 * C)
         imgs: (N, C, H, W)
         """
         c = self.out_channels
         p = self.x_embedder.patch_size[0] if patch_size is None else patch_size
-        h = w = int(x.shape[1] ** 0.5)
-        assert h * w == x.shape[1]
+        if grid_h is None or grid_w is None:
+            grid_h = grid_w = int(x.shape[1] ** 0.5)
+        if grid_h * grid_w != x.shape[1]:
+            raise ValueError(f"Token count {x.shape[1]} does not match grid {grid_h}x{grid_w}")
 
-        x = x.reshape(shape=(x.shape[0], h, w, p, p, c))
+        x = x.reshape(shape=(x.shape[0], grid_h, grid_w, p, p, c))
         x = torch.einsum('nhwpqc->nchpwq', x)
-        imgs = x.reshape(shape=(x.shape[0], c, h * p, w * p))
+        imgs = x.reshape(shape=(x.shape[0], c, grid_h * p, grid_w * p))
         return imgs
     
     def forward(self, x, t, y, y_pooled=None, point_prompts=None, pos=None, mask=None, loc_embed=None, return_logvar=False,
@@ -408,8 +410,21 @@ class SiT(nn.Module):
         t: (N,) tensor of diffusion timesteps
         y: (N,) tensor of class labels
         """
-        x = self.x_embedder(x) + self.pos_embed  # (N, T, D), where T = H * W / patch_size ** 2
+        _, _, latent_h, latent_w = x.shape
+        patch = self.x_embedder.patch_size[0]
+        if latent_h % patch != 0 or latent_w % patch != 0:
+            raise ValueError(
+                f"Latent size {latent_h}x{latent_w} must be divisible by patch size {patch}"
+            )
+        grid_h, grid_w = latent_h // patch, latent_w // patch
+        x = embed_patches(self.x_embedder, x)
+        x = x + interpolate_2d_pos_embed(self.pos_embed, grid_h, grid_w).to(dtype=x.dtype)
         N, T, D = x.shape
+        native_px = int(self.pos_embed.shape[1] ** 0.5) * patch * 8
+        token_pos = None
+        if pos is not None:
+            scale = pos.new_tensor([grid_h / native_px, grid_w / native_px])
+            token_pos = pos.to(dtype=x.dtype) * scale
 
         # timestep and class embedding
         t_embed = self.t_embedder(t)                   # (N, D)
@@ -436,7 +451,7 @@ class SiT(nn.Module):
             y_pooled = self.y_embedder(y_pooled)
             if self.point_prompts:
                 point_prompts = self.y_embedder(point_prompts)
-                point_pos_enc = self.point_pos_encoding(torch.cat((torch.sin(2*np.pi*pos/255), torch.cos(2*np.pi*pos/255)), dim=-1))
+                point_pos_enc = self.point_pos_encoding(torch.cat((torch.sin(2*np.pi*pos/(native_px - 1)), torch.cos(2*np.pi*pos/(native_px - 1))), dim=-1))
                 point_prompts = point_prompts + point_pos_enc
                 # point_prompts = torch.cat(((y_pooled+t_embed).unsqueeze(1), point_prompts), dim=1)
                 point_prompts = torch.cat((y_pooled.unsqueeze(1), point_prompts), dim=1)
@@ -453,12 +468,12 @@ class SiT(nn.Module):
                 if self.geolocation:
                     if self.legacy:
                         if self.point_prompts:
-                            x = block(x, c, point_prompts, pos//16, mask, t_embed+loc_embed)
+                            x = block(x, c, point_prompts, token_pos, mask, t_embed+loc_embed, grid_size=(grid_h, grid_w))
                         else:
                             x = block(x, c, t=t_embed+loc_embed)
                     else:
                         if self.point_prompts:
-                            x = block(x, c, point_prompts, pos//16, mask, y_pooled+t_embed+loc_embed)
+                            x = block(x, c, point_prompts, token_pos, mask, y_pooled+t_embed+loc_embed, grid_size=(grid_h, grid_w))
                         elif self.omega:
                             x = block(x, c, mask=mask, t=y_pooled+t_embed+loc_embed, inst_tokens=inst_tokens, instance_mask=inst_mask,
                                       polygon_xy=polygon_xy, polygon_xy_mask=polygon_xy_mask, polyline_xy=polyline_xy, polyline_xy_mask=polyline_xy_mask, 
@@ -468,12 +483,12 @@ class SiT(nn.Module):
                 else:
                     if self.legacy:
                         if self.point_prompts:
-                            x = block(x, c, point_prompts, pos//16, mask, t_embed)
+                            x = block(x, c, point_prompts, token_pos, mask, t_embed, grid_size=(grid_h, grid_w))
                         else:
                             x = block(x, c, t=t_embed)
                     else:
                         if self.point_prompts:
-                            x = block(x, c, point_prompts, pos//16, mask, y_pooled+t_embed)
+                            x = block(x, c, point_prompts, token_pos, mask, y_pooled+t_embed, grid_size=(grid_h, grid_w))
                         if self.omega:
                             x = block(x, c, mask=mask, t=y_pooled+t_embed, inst_tokens=inst_tokens, instance_mask=inst_mask,
                                       polygon_xy=polygon_xy, polygon_xy_mask=polygon_xy_mask, polyline_xy=polyline_xy, polyline_xy_mask=polyline_xy_mask, 
@@ -499,7 +514,7 @@ class SiT(nn.Module):
                 x = self.final_layer(x, y_pooled+t_embed)                # (N, T, patch_size ** 2 * out_channels)
         else:
             x = self.final_layer(x, c)
-        x = self.unpatchify(x)                   # (N, out_channels, H, W)
+        x = self.unpatchify(x, grid_h=grid_h, grid_w=grid_w)                   # (N, out_channels, H, W)
 
         return x, zs
 
@@ -508,6 +523,36 @@ class SiT(nn.Module):
 #                   Sine/Cosine Positional Embedding Functions                  #
 #################################################################################
 # https://github.com/facebookresearch/mae/blob/main/util/pos_embed.py
+
+def embed_patches(x_embedder, x):
+    """Apply ``PatchEmbed`` without enforcing the constructor ``img_size``."""
+    x = x_embedder.proj(x)
+    if getattr(x_embedder, "flatten", True):
+        x = x.flatten(2).transpose(1, 2)
+    norm = getattr(x_embedder, "norm", None)
+    if norm is not None:
+        x = norm(x)
+    return x
+
+
+def interpolate_2d_pos_embed(pos_embed, grid_h, grid_w):
+    """Bicubic-resize a frozen square sin-cos grid to ``(grid_h, grid_w)`` tokens.
+
+    ``pos_embed`` is ``(1, orig*orig, dim)`` as stored on the trained SiT. The
+    native 256px / 32-latent / patch-2 grid is 16×16; other image sizes reuse
+    those weights by interpolating in 2D (MAE / ViT / DiT convention).
+    """
+    if pos_embed.ndim != 3 or pos_embed.shape[0] != 1:
+        raise ValueError(f"Expected pos_embed of shape (1, N, C), got {tuple(pos_embed.shape)}")
+    _, num_tokens, dim = pos_embed.shape
+    orig = int(num_tokens ** 0.5)
+    if orig * orig != num_tokens:
+        raise ValueError(f"pos_embed token count {num_tokens} is not a square grid")
+    if orig == grid_h and orig == grid_w:
+        return pos_embed
+    pos = pos_embed.to(dtype=torch.float32).reshape(1, orig, orig, dim).permute(0, 3, 1, 2)
+    pos = F.interpolate(pos, size=(grid_h, grid_w), mode="bicubic", align_corners=False)
+    return pos.permute(0, 2, 3, 1).reshape(1, grid_h * grid_w, dim).to(dtype=pos_embed.dtype)
 
 def get_2d_sincos_pos_embed(embed_dim, grid_size, cls_token=False, extra_tokens=0):
     """

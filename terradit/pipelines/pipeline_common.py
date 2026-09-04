@@ -433,7 +433,9 @@ class TerraDiTPipelineBase(DiffusionPipeline):
             prompt / negative_prompt:
                 String captions; mutually exclusive with the matching `*_embeds`.
             height / width (`int`):
-                Output pixel size. Must be positive multiples of `vae_scale_factor`.
+                Output pixel size. Must be positive multiples of
+                ``vae_scale_factor * patch_size`` (typically 16). Other sizes
+                interpolate the frozen 2D positional embeddings.
             callback_steps (`int`, *optional*):
                 Deprecated positive-int callback interval.
             prompt_embeds / negative_prompt_embeds / pooled_prompt_embeds:
@@ -444,18 +446,14 @@ class TerraDiTPipelineBase(DiffusionPipeline):
         """
         if height <= 0 or width <= 0:
             raise ValueError(f"`height` and `width` must be positive, got {height}x{width}")
-        if height % self.vae_scale_factor != 0 or width % self.vae_scale_factor != 0:
+        patch = getattr(self.transformer, "patch_size", 2)
+        if isinstance(patch, (tuple, list)):
+            patch = patch[0]
+        min_mult = self.vae_scale_factor * int(patch)
+        if height % min_mult != 0 or width % min_mult != 0:
             raise ValueError(
-                f"`height` and `width` must be divisible by {self.vae_scale_factor}, got {height}x{width}"
-            )
-        native = int(getattr(self.transformer.config, "resolution", 256))
-        if height != native or width != native:
-            logger.warning(
-                "Requested %sx%s but the transformer was trained at %sx%s; positional embeddings are not interpolated.",
-                height,
-                width,
-                native,
-                native,
+                f"`height` and `width` must be divisible by {min_mult} "
+                f"(VAE scale {self.vae_scale_factor} × patch {patch}), got {height}x{width}"
             )
 
         if callback_steps is not None and (not isinstance(callback_steps, int) or callback_steps <= 0):

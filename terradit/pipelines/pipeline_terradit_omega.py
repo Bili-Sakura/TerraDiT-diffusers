@@ -154,9 +154,10 @@ class TerraDiTOmegaPipeline(TerraDiTPipelineBase):
             prompt (`str` or `list[str]`, *optional*):
                 Global caption(s). Git-10M-style long descriptions work best.
             height (`int`, *optional*):
-                Output height in pixels. Defaults to the transformer's native resolution (256).
+                Output height in pixels. Defaults to the trained resolution (256).
+                Other sizes (multiples of 16) interpolate positional embeddings.
             width (`int`, *optional*):
-                Output width in pixels. Defaults to the transformer's native resolution (256).
+                Output width in pixels. Defaults to the trained resolution (256).
             num_inference_steps (`int`, defaults to 100):
                 Euler steps. Released weights were sampled with 100 steps and no CFG.
             timesteps (`list[int]`, *optional*):

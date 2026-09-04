@@ -69,7 +69,7 @@ class LocalCrossAttention(nn.Module):
         self.kv_linear = nn.Linear(d_model, d_model*2)
         self.proj = zero_module(nn.Linear(d_model, d_model))
 
-    def forward(self, x, cond, pos, mask=None):
+    def forward(self, x, cond, pos, mask=None, grid_size=None):
         # query: img tokens; key/value: condition; mask: if padding tokens
         B, N, C = x.shape
         Bc, Nc, Cc = cond.shape
@@ -83,8 +83,12 @@ class LocalCrossAttention(nn.Module):
         k = k.permute(0, 2, 1, 3)   # (B, num_heads, N, head_dim)
         v = v.permute(0, 2, 1, 3)   # (B, num_heads, N, head_dim)
         attn = torch.einsum('bhqd,bhkd->bhqk', q, k) / math.sqrt(self.head_dim)
-        x_pos = torch.arange(int(math.sqrt(N)), device=x.device)
-        y_pos = torch.arange(int(math.sqrt(N)), device=x.device)
+        if grid_size is None:
+            grid_h = grid_w = int(math.sqrt(N))
+        else:
+            grid_h, grid_w = grid_size
+        x_pos = torch.arange(grid_h, device=x.device)
+        y_pos = torch.arange(grid_w, device=x.device)
         X1, X2 = torch.meshgrid(x_pos, y_pos, indexing="ij")
         X1 = repeat(X1.flatten(), 'n -> b n', b=B)
         X2 = repeat(X2.flatten(), 'n -> b n', b=B)

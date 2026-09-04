@@ -98,6 +98,8 @@ pipe = TerraDiTAlphaPipeline.from_pretrained(
 pipe = pipe.to("cuda")
 image = pipe(
     "The satellite image shows a coastal town with a marina and red-roofed houses.",
+    height=256,
+    width=256,  # other multiples of 16 interpolate the trained 256px positional embeddings
     generator=torch.Generator(device="cuda").manual_seed(42),
 ).images[0]
 ```

@@ -12,6 +12,7 @@ from diffusers.pipelines.pipeline_utils import ImagePipelineOutput
 from safetensors.torch import save_file
 
 from terradit.hf import DIFFUSERS_REPO, FAMILY_HUB_SUBFOLDER, VARIANT_HUB_SUBFOLDER, is_diffusers_pipeline_dir
+from terradit.models.sit import interpolate_2d_pos_embed
 from terradit.models.transformer import TerraDiTTransformer2DModel
 from terradit.pipelines.pipeline_common import (
     flow_match_euler_denoise,
@@ -99,6 +100,37 @@ def test_flow_match_euler_matches_manual_step():
             v = model(x, t, y=y, y_pooled=yp, return_dict=False)[0]
             x = x + (t_next - t_cur) * v
     assert torch.allclose(out, x, atol=1e-4, rtol=1e-4)
+
+
+def test_interpolate_pos_embed_identity_and_resize():
+    torch.manual_seed(0)
+    pos = torch.randn(1, 4, 8)
+    assert torch.equal(interpolate_2d_pos_embed(pos, 2, 2), pos)
+    resized = interpolate_2d_pos_embed(pos, 4, 2)
+    assert resized.shape == (1, 8, 8)
+
+
+def test_variable_resolution_pos_interpolation():
+    pipe = _pipeline("alpha")
+    y, yp = _prompt_embeds()
+    out = pipe(
+        prompt_embeds=y,
+        pooled_prompt_embeds=yp,
+        height=64,
+        width=64,
+        num_inference_steps=2,
+        output_type="latent",
+    )
+    assert out.images.shape == (1, 4, 8, 8)
+    wide = pipe(
+        prompt_embeds=y,
+        pooled_prompt_embeds=yp,
+        height=64,
+        width=32,
+        num_inference_steps=2,
+        output_type="latent",
+    )
+    assert wide.images.shape == (1, 4, 8, 4)
 
 
 def test_call_latent_output_and_reproducibility():

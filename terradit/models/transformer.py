@@ -109,7 +109,8 @@ class TerraDiTTransformer2DModel(ModelMixin, ConfigMixin):
         sample_size (`int`, defaults to 32):
             Alias of `input_size` kept for DiT-style configs.
         resolution (`int`, defaults to 256):
-            Native decoded image size in pixels.
+            Native decoded image size in pixels. Other sizes interpolate the
+            frozen 2D sin-cos positional embeddings.
         num_classes (`int`, defaults to 1000):
             Unused class-table size kept for SiT constructor compatibility.
         encoder_depth (`int`, defaults to 8):
