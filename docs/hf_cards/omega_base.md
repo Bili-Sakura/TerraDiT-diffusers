@@ -24,7 +24,7 @@ Trained from scratch for 400k steps, lr 2e-5, effective batch 256, REPA. This is
 ## Use
 
 ```bash
-python terradit/omega_demo.py --ckpt omega_base
+python terradit/omega_demo.py --subfolder TerraDiT-Omega-B
 ```
 
 ```python

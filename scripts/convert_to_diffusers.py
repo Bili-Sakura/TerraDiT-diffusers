@@ -25,8 +25,8 @@ The scheduler folder contains only ``scheduler_config.json``.
     python scripts/convert_to_diffusers.py --ckpt alpha_xl --out release/TerraDiT-Alpha-XL --include-aux
 
 Without ``--include-aux`` the folder holds the transformer, scheduler, model_index,
-and a ``pipeline.py`` re-export. ``from_checkpoint`` then loads the VAE and LongCLIP
-from their Hub ids.
+and a ``pipeline.py`` re-export. ``from_pretrained`` then loads the VAE and LongCLIP
+via ``_ensure_aux`` when they are not serialized.
 """
 from __future__ import annotations
 
@@ -37,9 +37,12 @@ import sys
 
 import diffusers
 import torch
+from diffusers.models import AutoencoderKL
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
+from transformers import AutoTokenizer, CLIPTextModel
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from terradit.data.dataset import TOKENIZER_ID
 from terradit.hf import FAMILY_HUB_SUBFOLDER, MODELS, VARIANT_HUB_SUBFOLDER, VAE_ID
 from terradit.models.transformer import TerraDiTTransformer2DModel
 from terradit.pipelines.pipeline_common import PIPELINE_CLASS_NAME, PIPELINE_MODULE, pipeline_class_for_family
@@ -147,11 +150,13 @@ def convert_checkpoint(
 
     pipe_cls = pipeline_class_for_family(family)
     if include_aux:
-        pipe = pipe_cls.from_checkpoint(
-            ckpt, family=family, arch=arch, legacy=legacy, load_aux=True,
+        pipe = pipe_cls(
+            transformer=transformer,
             scheduler=scheduler,
+            vae=AutoencoderKL.from_pretrained(VAE_ID),
+            text_encoder=CLIPTextModel.from_pretrained(TOKENIZER_ID),
+            tokenizer=AutoTokenizer.from_pretrained(TOKENIZER_ID),
         )
-        pipe.transformer = transformer
         pipe.save_pretrained(out_dir, safe_serialization=True)
     else:
         _write_model_index(out_dir, family, include_aux=False)

@@ -297,16 +297,23 @@ def test_resolve_hub_load_defaults_family_subfolder():
     assert resolve_hub_load(DIFFUSERS_REPO, "TerraDiT-Omega-B", "TerraDiT-Omega-XL") == (
         DIFFUSERS_REPO, "TerraDiT-Omega-B",
     )
-    assert resolve_hub_load("omega_base", None, "TerraDiT-Omega-XL") == (
-        DIFFUSERS_REPO, VARIANT_HUB_SUBFOLDER["omega_base"],
+    assert resolve_hub_load("TerraDiT-Alpha-XL", None, "TerraDiT-Sigma-XL") == (
+        DIFFUSERS_REPO, "TerraDiT-Alpha-XL",
     )
-    assert resolve_hub_load("alpha", None, "TerraDiT-Sigma-XL") == (DIFFUSERS_REPO, "TerraDiT-Alpha-XL")
     assert VARIANT_HUB_SUBFOLDER["omega_base"] == "TerraDiT-Omega-B"
     assert FAMILY_HUB_SUBFOLDER == {
         "alpha": "TerraDiT-Alpha-XL",
         "sigma": "TerraDiT-Sigma-XL",
         "omega": "TerraDiT-Omega-XL",
     }
+
+
+def test_pipeline_init_has_no_family_arg():
+    import inspect
+
+    params = inspect.signature(TerraDiTAlphaPipeline.__init__).parameters
+    assert "family" not in params
+    assert not hasattr(TerraDiTAlphaPipeline, "from_checkpoint")
 
 
 def test_pipeline_class_for_family():

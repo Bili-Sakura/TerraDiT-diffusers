@@ -9,7 +9,8 @@ Split files live under <data-root>/splits/<split>/ as a canonical triplet
 scripts/download_data.py; override any path explicitly with --metadata etc.
 
     python terradit/generate.py --family omega --split random \
-        --ckpt omega_xl --data-root data/git10m --hf-cache-dir data/git10m/hf \
+        --ckpt BiliSakura/TerraDiT --subfolder TerraDiT-Omega-XL \
+        --data-root data/git10m --hf-cache-dir data/git10m/hf \
         --condition-type omega --out-dir output/omega_random --batch-size 16
 
 The "dense" split is the min-15-instances variant of the random split.
@@ -45,10 +46,9 @@ def main():
     ap.add_argument("--family", required=True, choices=["alpha", "sigma", "omega"])
     ap.add_argument("--split", default="random", choices=["random", "spatial", "dense"])
     ap.add_argument("--ckpt", required=True,
-                    help=f"Hub repo ({DIFFUSERS_REPO}), release name (alpha_xl/…), safetensors dir/file, or .pt")
+                    help=f"Hub repo ({DIFFUSERS_REPO}) or a local Diffusers folder")
     ap.add_argument("--subfolder", default=None,
                     help="Hub subfolder (TerraDiT-Alpha-XL / TerraDiT-Sigma-XL / TerraDiT-Omega-XL / TerraDiT-Omega-B)")
-    ap.add_argument("--arch", default=None, help="override the arch stored in the release config")
     ap.add_argument("--data-root", required=True)
     ap.add_argument("--hf-cache-dir", default=None)
     ap.add_argument("--hf-repo-id", default=GIT10M_REPO)
@@ -60,7 +60,6 @@ def main():
     ap.add_argument("--batch-size", type=int, default=16)
     ap.add_argument("--limit", type=int, default=None, help="cap number of tiles (debug)")
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--legacy", action=argparse.BooleanOptionalAction, default=None)
     # explicit path overrides (bypass the canonical splits/<split>/ layout)
     ap.add_argument("--metadata", default=None)
     ap.add_argument("--inst-meta", default=None)
@@ -87,10 +86,9 @@ def main():
             sigma_kwargs = dict(point_source="instances")
 
     pipe_cls = pipeline_class_for_family(args.family)
-    pipe = pipe_cls.from_checkpoint(
-        args.ckpt, family=args.family, arch=args.arch, legacy=args.legacy, device=device,
-        subfolder=args.subfolder,
-    )
+    pipe = pipe_cls.from_pretrained(args.ckpt, subfolder=args.subfolder)
+    pipe._ensure_aux(device)
+    pipe = pipe.to(device)
     clip = pipe.text_encoder
 
     hf = load_git10m(args.hf_cache_dir, repo_id=args.hf_repo_id, revision=args.hf_revision)

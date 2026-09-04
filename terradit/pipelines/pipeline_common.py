@@ -38,10 +38,8 @@ from terradit.data.dataset import CAPTION_MAX_LEN, TOKENIZER_ID
 from terradit.hf import (
     DIFFUSERS_REPO,
     FAMILY_HUB_SUBFOLDER,
-    MODELS,
     VARIANT_HUB_SUBFOLDER,
     VAE_ID,
-    is_diffusers_pipeline_dir,
 )
 from terradit.models.transformer import TerraDiTTransformer2DModel
 
@@ -176,10 +174,6 @@ def resolve_hub_load(pretrained_model_name_or_path: str | os.PathLike | None, su
         return path, subfolder
     if path in (DIFFUSERS_REPO, "BiliSakura/TerraDiT"):
         return path, subfolder if subfolder is not None else default_subfolder
-    if path in VARIANT_HUB_SUBFOLDER:
-        return DIFFUSERS_REPO, subfolder if subfolder is not None else VARIANT_HUB_SUBFOLDER[path]
-    if path in FAMILY_HUB_SUBFOLDER:
-        return DIFFUSERS_REPO, subfolder if subfolder is not None else FAMILY_HUB_SUBFOLDER[path]
     known_subs = set(FAMILY_HUB_SUBFOLDER.values()) | set(VARIANT_HUB_SUBFOLDER.values())
     if path in known_subs:
         return DIFFUSERS_REPO, path
@@ -207,7 +201,6 @@ class TerraDiTPipelineBase(DiffusionPipeline):
         vae: AutoencoderKL | None = None,
         text_encoder: CLIPTextModel | None = None,
         tokenizer: PreTrainedTokenizerBase | CLIPTokenizer | None = None,
-        family: str | None = None,
         caption_max_length: int = CAPTION_MAX_LEN,
         tokenizer_id: str = TOKENIZER_ID,
         vae_id: str = VAE_ID,
@@ -228,7 +221,6 @@ class TerraDiTPipelineBase(DiffusionPipeline):
         self.vae_scale_factor = vae_scale
         self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor)
         self.register_to_config(
-            family=family or getattr(self, "family", None) or getattr(transformer.config, "family", "alpha"),
             caption_max_length=caption_max_length,
             tokenizer_id=tokenizer_id,
             vae_id=vae_id,
@@ -258,115 +250,6 @@ class TerraDiTPipelineBase(DiffusionPipeline):
         if subfolder is not None:
             kwargs["subfolder"] = subfolder
         return super().from_pretrained(pretrained_model_name_or_path, **kwargs)
-
-    @classmethod
-    def from_checkpoint(
-        cls,
-        pretrained_model_name_or_path: str,
-        *,
-        family: str | None = None,
-        arch: str | None = None,
-        torch_dtype: torch.dtype | None = None,
-        device: str | torch.device | None = None,
-        checkpoints_root: str = "checkpoints",
-        legacy: bool | None = None,
-        load_aux: bool = True,
-        vae: AutoencoderKL | None = None,
-        text_encoder: CLIPTextModel | None = None,
-        tokenizer: PreTrainedTokenizerBase | None = None,
-        scheduler: FlowMatchEulerDiscreteScheduler | None = None,
-        subfolder: str | None = None,
-        **kwargs: Any,
-    ) -> "TerraDiTPipelineBase":
-        r"""
-        Load a pipeline from a Diffusers folder, Hub id, release name, or a legacy checkpoint.
-
-        Parameters:
-            pretrained_model_name_or_path (`str`):
-                Diffusers directory, Hub id (`BiliSakura/TerraDiT`), release name
-                (`omega_xl`), or a `model.safetensors` / training `.pt` path.
-            family / arch:
-                Overrides used when constructing a transformer from a legacy checkpoint.
-            torch_dtype (`torch.dtype`, *optional*):
-                Cast floating modules after load.
-            device (`str` or `torch.device`, *optional*):
-                Device to move the pipeline to.
-            checkpoints_root (`str`):
-                Local cache for auto-downloaded release weights.
-            legacy (`bool`, *optional*):
-                Override the adaLN legacy flag stored in the release config.
-            load_aux (`bool`, defaults to `True`):
-                Load the SDXL VAE and LongCLIP when they are not part of the folder.
-            vae / text_encoder / tokenizer / scheduler:
-                Optional pre-constructed components (used by tests and conversion).
-            subfolder (`str`, *optional*):
-                Hub subfolder. Defaults to this class's ``hub_subfolder``
-                (``TerraDiT-Alpha-XL`` / ``TerraDiT-Sigma-XL`` / ``TerraDiT-Omega-XL``).
-            **kwargs:
-                Forwarded to [`DiffusionPipeline.from_pretrained`] for Diffusers folders.
-
-        Returns:
-            A family pipeline (`TerraDiTAlphaPipeline`, `TerraDiTSigmaPipeline`, or
-            `TerraDiTOmegaPipeline`).
-        """
-        family = family or cls.family
-        path = pretrained_model_name_or_path
-        if is_diffusers_pipeline_dir(path):
-            pipe = cls.from_pretrained(path, torch_dtype=torch_dtype, **kwargs)
-            if load_aux:
-                pipe._ensure_aux(device)
-            if device is not None:
-                pipe.to(device)
-            return pipe
-
-        hub_id, hub_sub = resolve_hub_load(path, subfolder, cls.hub_subfolder)
-        use_hub = (
-            not os.path.exists(path)
-            and not str(path).endswith((".pt", ".safetensors"))
-            and (
-                path in (DIFFUSERS_REPO, cls.hub_repo_id, "BiliSakura/TerraDiT")
-                or (subfolder is not None and hub_id == DIFFUSERS_REPO)
-                or (path not in MODELS and "/" in str(path))
-            )
-        )
-        if use_hub:
-            pipe = cls.from_pretrained(hub_id, subfolder=hub_sub, torch_dtype=torch_dtype, **kwargs)
-            if load_aux:
-                pipe._ensure_aux(device)
-            if device is not None:
-                pipe.to(device)
-            return pipe
-
-        transformer = TerraDiTTransformer2DModel.from_legacy_checkpoint(
-            pretrained_model_name_or_path,
-            family=family,
-            arch=arch,
-            checkpoints_root=checkpoints_root,
-            legacy=legacy,
-            torch_dtype=torch_dtype,
-        )
-        if scheduler is None:
-            scheduler = FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, shift=1.0)
-        if load_aux:
-            if vae is None:
-                vae = AutoencoderKL.from_pretrained(VAE_ID)
-            if tokenizer is None:
-                tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_ID)
-            if text_encoder is None:
-                text_encoder = CLIPTextModel.from_pretrained(TOKENIZER_ID)
-        pipe = cls(
-            transformer=transformer,
-            scheduler=scheduler,
-            vae=vae,
-            text_encoder=text_encoder,
-            tokenizer=tokenizer,
-            family=family,
-        )
-        if torch_dtype is not None:
-            pipe.to(dtype=torch_dtype)
-        if device is not None:
-            pipe.to(device)
-        return pipe
 
     def encode_prompt(
         self,

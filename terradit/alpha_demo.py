@@ -40,10 +40,9 @@ PROMPTS = [
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--ckpt", default=DIFFUSERS_REPO,
-                    help=f"Hub repo ({DIFFUSERS_REPO}), release name (alpha_xl), or a safetensors/.pt path")
+                    help=f"Hub repo ({DIFFUSERS_REPO}) or a local Diffusers folder")
     ap.add_argument("--subfolder", default=None,
                     help=f"Hub subfolder (default: {FAMILY_HUB_SUBFOLDER['alpha']})")
-    ap.add_argument("--arch", default=None, help="override the arch in the release config")
     ap.add_argument("--prompt", nargs="+", default=None, help="free-text caption(s); default: PROMPTS above")
     ap.add_argument("--index", type=int, nargs="+", default=None,
                     help="use the real Git-10M captions of these <data-root>/metadata/alpha.json rows")
@@ -53,8 +52,6 @@ def main():
     ap.add_argument("--num-steps", type=int, default=100)
     ap.add_argument("--out-dir", default="samples/alpha")
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--legacy", action=argparse.BooleanOptionalAction, default=None,
-                    help="override the legacy flag (only for old pre-fix weights)")
     args = ap.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -73,10 +70,9 @@ def main():
     for c, cap in enumerate(prompts):
         print(f"[caption {c}] {cap[:140]}{'...' if len(cap) > 140 else ''}")
 
-    pipe = TerraDiTAlphaPipeline.from_checkpoint(
-        args.ckpt, family="alpha", arch=args.arch, legacy=args.legacy, device=device,
-        subfolder=args.subfolder,
-    )
+    pipe = TerraDiTAlphaPipeline.from_pretrained(args.ckpt, subfolder=args.subfolder)
+    pipe._ensure_aux(device)
+    pipe = pipe.to(device)
     V = args.num_images
     generator = torch.Generator(device=device).manual_seed(args.seed)
     out = pipe(

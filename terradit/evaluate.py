@@ -2,11 +2,11 @@
 
 One command per (model, split, condition) cell of the paper tables:
 
-    python terradit/evaluate.py --ckpt omega_xl --split random --condition-type omega \
-        --data-root data/git10m --hf-cache-dir data/git10m/hf
-    python terradit/evaluate.py --ckpt omega_xl --split spatial --condition-type box
-    python terradit/evaluate.py --ckpt alpha_xl --split random
-    python terradit/evaluate.py --ckpt sigma_xl --split random
+    python terradit/evaluate.py --ckpt BiliSakura/TerraDiT --family omega --split random \
+        --condition-type omega --data-root data/git10m --hf-cache-dir data/git10m/hf
+    python terradit/evaluate.py --ckpt BiliSakura/TerraDiT --family omega --split spatial --condition-type box
+    python terradit/evaluate.py --ckpt BiliSakura/TerraDiT --family alpha --split random
+    python terradit/evaluate.py --ckpt BiliSakura/TerraDiT --family sigma --split random
 
 Splits: ``random`` and ``spatial`` are the protocol; ``dense`` is the >=15-instance subset
 of random (opt-in). Generated tiles go to ``<out-root>/<name>_<split>_<cond>/``, results to
@@ -20,26 +20,26 @@ import argparse
 import subprocess
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from terradit.hf import (MODELS, resolve_checkpoint, load_weights, load_git10m,
-                         GIT10M_REPO, GIT10M_REVISION)
+from terradit.hf import load_git10m, GIT10M_REPO, GIT10M_REVISION
 from terradit.eval.metrics import (load_split_rows, ensure_gt_tiles, evaluate_folder,
                                  attach_captions, ALL_METRICS, stem)
 
 
 def infer_family(ckpt):
-    if ckpt in MODELS:
-        return MODELS[ckpt]["family"]
-    _, config = load_weights(resolve_checkpoint(ckpt))
-    if config and "family" in config:
-        return config["family"]
-    raise ValueError("cannot infer --family from checkpoint; pass --family explicitly")
+    if os.path.isdir(ckpt):
+        cfg = os.path.join(ckpt, "transformer", "config.json")
+        if os.path.isfile(cfg):
+            family = json.load(open(cfg)).get("family")
+            if family:
+                return family
+    raise ValueError("cannot infer --family from a Diffusers folder; pass --family explicitly")
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ckpt", required=True, help="release name (omega_xl ...) or safetensors/.pt path")
+    ap.add_argument("--ckpt", required=True, help="Hub repo (BiliSakura/TerraDiT) or a local Diffusers folder")
+    ap.add_argument("--subfolder", default=None, help="Hub subfolder (TerraDiT-Alpha-XL / … / TerraDiT-Omega-B)")
     ap.add_argument("--family", default=None, choices=["alpha", "sigma", "omega"])
-    ap.add_argument("--arch", default=None)
     ap.add_argument("--split", default="random", choices=["random", "spatial", "dense"])
     ap.add_argument("--condition-type", default="omega", choices=["omega", "box", "point"],
                     help="omega only: which geometry modalities the model sees")
@@ -62,7 +62,7 @@ def main():
     args = ap.parse_args()
 
     family = args.family or infer_family(args.ckpt)
-    name = args.name or (args.ckpt if args.ckpt in MODELS else stem(os.path.basename(args.ckpt.rstrip("/"))))
+    name = args.name or (args.subfolder or stem(os.path.basename(args.ckpt.rstrip("/"))))
     cond = args.condition_type if family == "omega" else "text"
     run = f"{name}_{args.split}_{cond}"
     gen_dir = os.path.join(args.out_root, run)
@@ -81,8 +81,8 @@ def main():
                "--seed", str(args.seed), "--hf-repo-id", args.hf_repo_id, "--hf-revision", args.hf_revision]
         if args.hf_cache_dir:
             cmd += ["--hf-cache-dir", args.hf_cache_dir]
-        if args.arch:
-            cmd += ["--arch", args.arch]
+        if args.subfolder:
+            cmd += ["--subfolder", args.subfolder]
         if family == "omega":
             cmd += ["--condition-type", args.condition_type]
         if args.limit:

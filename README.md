@@ -85,9 +85,7 @@ Inference uses one Diffusers pipeline class per family
 with `FlowMatchEulerDiscreteScheduler` (100 Euler steps, no CFG, SDXL VAE).
 Converted folders live on [BiliSakura/TerraDiT](https://huggingface.co/BiliSakura/TerraDiT)
 as `TerraDiT-Alpha-XL` / `TerraDiT-Sigma-XL` / `TerraDiT-Omega-XL` / `TerraDiT-Omega-B`.
-Legacy release names (`alpha_xl`, …) still load from
-[MVRL/TerraDiT](https://huggingface.co/MVRL/TerraDiT). Convert a release or
-training checkpoint with
+Convert a training checkpoint with
 `python scripts/convert_to_diffusers.py --ckpt omega_xl --out release/TerraDiT --repo-layout`.
 
 ```python
@@ -124,7 +122,7 @@ python terradit/sigma_demo.py --prompt "a dense residential neighborhood" \
 
 # Ω: text + lat/lon + any geospatial primitive (EXAMPLE has one of each; or --example-json)
 python terradit/omega_demo.py
-python terradit/omega_demo.py --ckpt omega_base --condition-type box
+python terradit/omega_demo.py --subfolder TerraDiT-Omega-B --condition-type box
 ```
 
 Each demo writes 4 samples plus an overlay of the conditioning to `samples/<family>/`.

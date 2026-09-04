@@ -7,7 +7,7 @@ Edit EXAMPLE below, or pass --example-json / --instances. Geolocation is optiona
 with lat/lon the RANGE+ submodule encodes it live; otherwise zeros are used.
 
     python terradit/omega_demo.py                                    # EXAMPLE below, omega_xl
-    python terradit/omega_demo.py --ckpt omega_base                  # SiT-B/2 GALA model
+    python terradit/omega_demo.py --subfolder TerraDiT-Omega-B       # SiT-B/2 GALA model
     python terradit/omega_demo.py --condition-type box               # drop polygons/polylines -> boxes+points
     python terradit/omega_demo.py --example-json my_scene.json --lat 51.5 --lon -0.12
     python terradit/omega_demo.py --data-root data/git10m --hf-cache-dir data/git10m/hf --index 0
@@ -63,11 +63,10 @@ CONDITION_DROPOUTS = OMEGA_CONDITION_DROPOUTS
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--ckpt", default=DIFFUSERS_REPO,
-                    help=f"Hub repo ({DIFFUSERS_REPO}), release name (omega_xl|omega_base), or a safetensors/.pt path")
+                    help=f"Hub repo ({DIFFUSERS_REPO}) or a local Diffusers folder")
     ap.add_argument("--subfolder", default=None,
                     help=f"Hub subfolder (default: {FAMILY_HUB_SUBFOLDER['omega']}; "
-                         f"omega_base -> {VARIANT_HUB_SUBFOLDER['omega_base']})")
-    ap.add_argument("--arch", default=None, help="override the arch in the release config")
+                         f"SiT-B/2 -> {VARIANT_HUB_SUBFOLDER['omega_base']})")
     # manual inputs
     ap.add_argument("--example-json", default=None,
                     help="JSON file with {caption, lat, lon, instances} (default: EXAMPLE above)")
@@ -87,7 +86,6 @@ def main():
     ap.add_argument("--num-steps", type=int, default=100)
     ap.add_argument("--out-dir", default="samples/omega")
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--legacy", action=argparse.BooleanOptionalAction, default=None)
     ap.add_argument("--no-show-inputs", action="store_true", help="skip the geometry-overlay PNG/TXT")
     args = ap.parse_args()
 
@@ -97,10 +95,9 @@ def main():
     B = args.num_images
     dropouts = CONDITION_DROPOUTS[args.condition_type]
 
-    pipe = TerraDiTOmegaPipeline.from_checkpoint(
-        args.ckpt, family="omega", arch=args.arch, legacy=args.legacy, device=device,
-        subfolder=args.subfolder,
-    )
+    pipe = TerraDiTOmegaPipeline.from_pretrained(args.ckpt, subfolder=args.subfolder)
+    pipe._ensure_aux(device)
+    pipe = pipe.to(device)
     tokenizer, clip = pipe.tokenizer, pipe.text_encoder
 
     if args.data_root is None:

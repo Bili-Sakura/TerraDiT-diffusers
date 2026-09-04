@@ -62,10 +62,9 @@ def random_points(k, rng):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--ckpt", default=DIFFUSERS_REPO,
-                    help=f"Hub repo ({DIFFUSERS_REPO}), release name (sigma_xl), or a safetensors/.pt path")
+                    help=f"Hub repo ({DIFFUSERS_REPO}) or a local Diffusers folder")
     ap.add_argument("--subfolder", default=None,
                     help=f"Hub subfolder (default: {FAMILY_HUB_SUBFOLDER['sigma']})")
-    ap.add_argument("--arch", default=None, help="override the arch in the release config")
     # manual inputs
     ap.add_argument("--prompt", default=None, help="global caption (default: EXAMPLE caption)")
     ap.add_argument("--points", default=None, help='JSON list of [x, y, "tag"] (default: EXAMPLE points)')
@@ -84,7 +83,6 @@ def main():
     ap.add_argument("--num-steps", type=int, default=100)
     ap.add_argument("--out-dir", default="samples/sigma")
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--legacy", action=argparse.BooleanOptionalAction, default=None)
     ap.add_argument("--no-show-inputs", action="store_true", help="skip the point-overlay PNG/TXT")
     args = ap.parse_args()
 
@@ -94,10 +92,9 @@ def main():
     os.makedirs(args.out_dir, exist_ok=True)
     B = args.num_images
 
-    pipe = TerraDiTSigmaPipeline.from_checkpoint(
-        args.ckpt, family="sigma", arch=args.arch, legacy=args.legacy, device=device,
-        subfolder=args.subfolder,
-    )
+    pipe = TerraDiTSigmaPipeline.from_pretrained(args.ckpt, subfolder=args.subfolder)
+    pipe._ensure_aux(device)
+    pipe = pipe.to(device)
     tokenizer, clip = pipe.tokenizer, pipe.text_encoder
 
     if args.data_root is None:
