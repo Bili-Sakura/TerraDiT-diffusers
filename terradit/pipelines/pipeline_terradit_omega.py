@@ -35,7 +35,7 @@ EXAMPLE_DOC_STRING = r"""
 
         >>> pipe = TerraDiTOmegaPipeline.from_pretrained(
         ...     "BiliSakura/TerraDiT",
-        ...     subfolder="TerraDiT-omega",
+        ...     subfolder="TerraDiT-Omega-XL",
         ...     torch_dtype=torch.float32,
         ... )
         >>> pipe = pipe.to("cuda")
@@ -54,7 +54,7 @@ EXAMPLE_DOC_STRING = r"""
         ```py
         >>> pipe = TerraDiTOmegaPipeline.from_pretrained(
         ...     "BiliSakura/TerraDiT",
-        ...     subfolder="TerraDiT-omega-base",
+        ...     subfolder="TerraDiT-Omega-B",
         ... )
         ```
 
@@ -63,7 +63,7 @@ EXAMPLE_DOC_STRING = r"""
 
         >>> pipe = DiffusionPipeline.from_pretrained(
         ...     "BiliSakura/TerraDiT",
-        ...     subfolder="TerraDiT-omega",
+        ...     subfolder="TerraDiT-Omega-XL",
         ...     custom_pipeline="pipeline.py",
         ...     trust_remote_code=True,
         ... )
@@ -80,7 +80,7 @@ class TerraDiTOmegaPipeline(TerraDiTPipelineBase):
 
     Ω adds heterogeneous instance geometry (polygons, polylines, boxes, points) through GALA.
     The SiT-B/2 `omega_base` weights use this same class with Hub subfolder
-    ``TerraDiT-omega-base``.
+    ``TerraDiT-Omega-B``.
 
     Parameters:
         transformer ([`TerraDiTTransformer2DModel`]):

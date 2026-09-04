@@ -51,14 +51,18 @@ def _infer_family(pretrained_model_name_or_path: str | None, family: str | None,
     if pretrained_model_name_or_path in VARIANT_HUB_SUBFOLDER:
         return MODELS.get(pretrained_model_name_or_path, {}).get("family", "omega" if "omega" in str(pretrained_model_name_or_path) else "alpha")
     if subfolder:
+        lowered = subfolder.lower()
         for key, name in FAMILY_HUB_SUBFOLDER.items():
-            if subfolder == name or subfolder.startswith(f"{name}-"):
+            if lowered == name.lower() or lowered.startswith(name.lower()):
                 return key
-        if "omega" in subfolder:
+        for key, name in VARIANT_HUB_SUBFOLDER.items():
+            if lowered == name.lower():
+                return MODELS.get(key, {}).get("family", "omega" if "omega" in key else "alpha")
+        if "omega" in lowered:
             return "omega"
-        if "sigma" in subfolder:
+        if "sigma" in lowered:
             return "sigma"
-        if "alpha" in subfolder:
+        if "alpha" in lowered:
             return "alpha"
     if pretrained_model_name_or_path and is_diffusers_pipeline_dir(pretrained_model_name_or_path):
         import json

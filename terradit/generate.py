@@ -47,7 +47,7 @@ def main():
     ap.add_argument("--ckpt", required=True,
                     help=f"Hub repo ({DIFFUSERS_REPO}), release name (alpha_xl/…), safetensors dir/file, or .pt")
     ap.add_argument("--subfolder", default=None,
-                    help="Hub subfolder (TerraDiT-alpha / TerraDiT-sigma / TerraDiT-omega / TerraDiT-omega-base)")
+                    help="Hub subfolder (TerraDiT-Alpha-XL / TerraDiT-Sigma-XL / TerraDiT-Omega-XL / TerraDiT-Omega-B)")
     ap.add_argument("--arch", default=None, help="override the arch stored in the release config")
     ap.add_argument("--data-root", required=True)
     ap.add_argument("--hf-cache-dir", default=None)

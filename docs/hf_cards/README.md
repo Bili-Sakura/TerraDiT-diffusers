@@ -44,12 +44,12 @@ python terradit/omega_demo.py            # downloads omega_xl on first use
 
 ```python
 from terradit import TerraDiTOmegaPipeline
-pipe = TerraDiTOmegaPipeline.from_pretrained("BiliSakura/TerraDiT", subfolder="TerraDiT-omega")
+pipe = TerraDiTOmegaPipeline.from_pretrained("BiliSakura/TerraDiT", subfolder="TerraDiT-Omega-XL")
 pipe = pipe.to("cuda")
 image = pipe("A small town crossed by a river and a road bridge.").images[0]
 ```
 
-A converted Diffusers folder loads with `DiffusionPipeline.from_pretrained(..., subfolder="TerraDiT-omega", custom_pipeline=..., trust_remote_code=True)`.
+A converted Diffusers folder loads with `DiffusionPipeline.from_pretrained(..., subfolder="TerraDiT-Omega-XL", custom_pipeline=..., trust_remote_code=True)`.
 Sampling: `FlowMatchEulerDiscreteScheduler`, 100 steps, no classifier-free guidance, SDXL VAE decoder. Text encoder:
 LongCLIP (`zer0int/LongCLIP-KO-LITE-TypoAttack-Attn-ViT-L-14`, 144 tokens). Geolocation:
 RANGE+ (1280-d). See the [GitHub repo](https://github.com/mvrl/TerraDiT) for demos,

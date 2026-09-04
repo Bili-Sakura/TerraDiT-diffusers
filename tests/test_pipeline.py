@@ -293,14 +293,20 @@ def test_convert_repo_layout_writes_hub_subfolder(tmp_path):
 
 
 def test_resolve_hub_load_defaults_family_subfolder():
-    assert resolve_hub_load(DIFFUSERS_REPO, None, "TerraDiT-alpha") == (DIFFUSERS_REPO, "TerraDiT-alpha")
-    assert resolve_hub_load(DIFFUSERS_REPO, "TerraDiT-omega-base", "TerraDiT-omega") == (
-        DIFFUSERS_REPO, "TerraDiT-omega-base",
+    assert resolve_hub_load(DIFFUSERS_REPO, None, "TerraDiT-Alpha-XL") == (DIFFUSERS_REPO, "TerraDiT-Alpha-XL")
+    assert resolve_hub_load(DIFFUSERS_REPO, "TerraDiT-Omega-B", "TerraDiT-Omega-XL") == (
+        DIFFUSERS_REPO, "TerraDiT-Omega-B",
     )
-    assert resolve_hub_load("omega_base", None, "TerraDiT-omega") == (
+    assert resolve_hub_load("omega_base", None, "TerraDiT-Omega-XL") == (
         DIFFUSERS_REPO, VARIANT_HUB_SUBFOLDER["omega_base"],
     )
-    assert resolve_hub_load("alpha", None, "TerraDiT-sigma") == (DIFFUSERS_REPO, "TerraDiT-alpha")
+    assert resolve_hub_load("alpha", None, "TerraDiT-Sigma-XL") == (DIFFUSERS_REPO, "TerraDiT-Alpha-XL")
+    assert VARIANT_HUB_SUBFOLDER["omega_base"] == "TerraDiT-Omega-B"
+    assert FAMILY_HUB_SUBFOLDER == {
+        "alpha": "TerraDiT-Alpha-XL",
+        "sigma": "TerraDiT-Sigma-XL",
+        "omega": "TerraDiT-Omega-XL",
+    }
 
 
 def test_pipeline_class_for_family():

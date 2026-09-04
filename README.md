@@ -84,7 +84,7 @@ Inference uses one Diffusers pipeline class per family
 (`TerraDiTAlphaPipeline`, `TerraDiTSigmaPipeline`, `TerraDiTOmegaPipeline`)
 with `FlowMatchEulerDiscreteScheduler` (100 Euler steps, no CFG, SDXL VAE).
 Converted folders live on [BiliSakura/TerraDiT](https://huggingface.co/BiliSakura/TerraDiT)
-as `TerraDiT-alpha` / `TerraDiT-sigma` / `TerraDiT-omega` / `TerraDiT-omega-base`.
+as `TerraDiT-Alpha-XL` / `TerraDiT-Sigma-XL` / `TerraDiT-Omega-XL` / `TerraDiT-Omega-B`.
 Legacy release names (`alpha_xl`, …) still load from
 [MVRL/TerraDiT](https://huggingface.co/MVRL/TerraDiT). Convert a release or
 training checkpoint with
@@ -95,7 +95,7 @@ from terradit import TerraDiTAlphaPipeline
 import torch
 
 pipe = TerraDiTAlphaPipeline.from_pretrained(
-    "BiliSakura/TerraDiT", subfolder="TerraDiT-alpha",
+    "BiliSakura/TerraDiT", subfolder="TerraDiT-Alpha-XL",
 )
 pipe = pipe.to("cuda")
 image = pipe(
@@ -107,10 +107,10 @@ image = pipe(
 ```python
 from terradit import TerraDiTSigmaPipeline, TerraDiTOmegaPipeline
 
-sigma = TerraDiTSigmaPipeline.from_pretrained("BiliSakura/TerraDiT", subfolder="TerraDiT-sigma")
-omega = TerraDiTOmegaPipeline.from_pretrained("BiliSakura/TerraDiT", subfolder="TerraDiT-omega")
+sigma = TerraDiTSigmaPipeline.from_pretrained("BiliSakura/TerraDiT", subfolder="TerraDiT-Sigma-XL")
+omega = TerraDiTOmegaPipeline.from_pretrained("BiliSakura/TerraDiT", subfolder="TerraDiT-Omega-XL")
 # SiT-B/2 Ω variant:
-# TerraDiTOmegaPipeline.from_pretrained("BiliSakura/TerraDiT", subfolder="TerraDiT-omega-base")
+# TerraDiTOmegaPipeline.from_pretrained("BiliSakura/TerraDiT", subfolder="TerraDiT-Omega-B")
 ```
 
 ```bash
@@ -149,8 +149,8 @@ All released weights are EMA, fp16 safetensors with a `config.json` beside them;
 shares one SiT backbone (`terradit/models/sit.py`) and the Diffusers flow-matching Euler
 scheduler (100 steps, no classifier-free guidance). Convert them to a one-stop Diffusers
 folder (`transformer/`, `scheduler/scheduler_config.json`, `model_index.json`, `pipeline.py`)
-with `scripts/convert_to_diffusers.py` (`--repo-layout` writes `TerraDiT-alpha` / `TerraDiT-sigma` /
-`TerraDiT-omega` / `TerraDiT-omega-base`; `--include-aux` also writes the SDXL VAE and LongCLIP).
+with `scripts/convert_to_diffusers.py` (`--repo-layout` writes `TerraDiT-Alpha-XL` / `TerraDiT-Sigma-XL` /
+`TerraDiT-Omega-XL` / `TerraDiT-Omega-B`; `--include-aux` also writes the SDXL VAE and LongCLIP).
 The derived data (tile ids + coordinates + `hf_idx`, OSM point rasters, instance geometry,
 RANGE+ embeddings, test splits) mirrors the layout the code expects; see
 [docs/DATA.md](docs/DATA.md) for the layout, provenance, and custom data.

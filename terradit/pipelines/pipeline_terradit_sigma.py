@@ -35,7 +35,7 @@ EXAMPLE_DOC_STRING = r"""
 
         >>> pipe = TerraDiTSigmaPipeline.from_pretrained(
         ...     "BiliSakura/TerraDiT",
-        ...     subfolder="TerraDiT-sigma",
+        ...     subfolder="TerraDiT-Sigma-XL",
         ...     torch_dtype=torch.float32,
         ... )
         >>> pipe = pipe.to("cuda")
@@ -54,7 +54,7 @@ EXAMPLE_DOC_STRING = r"""
 
         >>> pipe = DiffusionPipeline.from_pretrained(
         ...     "BiliSakura/TerraDiT",
-        ...     subfolder="TerraDiT-sigma",
+        ...     subfolder="TerraDiT-Sigma-XL",
         ...     custom_pipeline="pipeline.py",
         ...     trust_remote_code=True,
         ... )

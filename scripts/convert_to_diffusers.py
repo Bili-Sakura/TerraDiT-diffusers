@@ -4,25 +4,25 @@ Each output directory is a self-contained family variant that
 ``TerraDiTAlphaPipeline.from_pretrained`` / ``DiffusionPipeline.from_pretrained``
 can load. Hub layout::
 
-    BiliSakura/TerraDiT/TerraDiT-alpha
-    BiliSakura/TerraDiT/TerraDiT-sigma
-    BiliSakura/TerraDiT/TerraDiT-omega
-    BiliSakura/TerraDiT/TerraDiT-omega-base
+    BiliSakura/TerraDiT/TerraDiT-Alpha-XL
+    BiliSakura/TerraDiT/TerraDiT-Sigma-XL
+    BiliSakura/TerraDiT/TerraDiT-Omega-XL
+    BiliSakura/TerraDiT/TerraDiT-Omega-B
 
 The scheduler folder contains only ``scheduler_config.json``.
 
     # released Hub weights (auto-download) -> family folder
-    python scripts/convert_to_diffusers.py --ckpt omega_xl --out release/TerraDiT-omega
+    python scripts/convert_to_diffusers.py --ckpt omega_xl --out release/TerraDiT-Omega-XL
 
     # write the four Hub subfolders under a repo root
     python scripts/convert_to_diffusers.py --ckpt alpha_xl --out release/TerraDiT --repo-layout
 
     # training .pt
     python scripts/convert_to_diffusers.py --ckpt exps/run/checkpoints/0400000.pt \
-        --family omega --arch SiT-B/2 --out release/TerraDiT-omega-base
+        --family omega --arch SiT-B/2 --out release/TerraDiT-Omega-B
 
     # include SDXL VAE + LongCLIP so the folder is one-stop
-    python scripts/convert_to_diffusers.py --ckpt alpha_xl --out release/TerraDiT-alpha --include-aux
+    python scripts/convert_to_diffusers.py --ckpt alpha_xl --out release/TerraDiT-Alpha-XL --include-aux
 
 Without ``--include-aux`` the folder holds the transformer, scheduler, model_index,
 and a ``pipeline.py`` re-export. ``from_checkpoint`` then loads the VAE and LongCLIP
@@ -106,7 +106,7 @@ def _write_model_index(out_dir: str, family: str, include_aux: bool) -> None:
 
 
 def resolve_out_dir(out_dir: str, family: str, repo_layout: bool, variant: str | None = None) -> str:
-    """Optionally nest ``TerraDiT-alpha`` / … under a Hub repo root."""
+    """Optionally nest ``TerraDiT-Alpha-XL`` / … under a Hub repo root."""
     if not repo_layout:
         return out_dir
     sub = VARIANT_HUB_SUBFOLDER.get(variant or "", FAMILY_HUB_SUBFOLDER[family])
@@ -172,7 +172,7 @@ def main() -> None:
     ap.add_argument("--include-aux", action="store_true",
                     help=f"also serialize SDXL VAE ({VAE_ID}) and LongCLIP")
     ap.add_argument("--repo-layout", action="store_true",
-                    help="write under <out>/TerraDiT-alpha|sigma|omega(|-base)")
+                    help="write under <out>/TerraDiT-Alpha-XL|Sigma-XL|Omega-XL|Omega-B")
     ap.add_argument("--dtype", default="fp16", choices=["fp16", "bf16", "fp32"])
     args = ap.parse_args()
 

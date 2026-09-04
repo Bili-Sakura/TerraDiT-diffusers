@@ -26,16 +26,16 @@ VAE_ID = "stabilityai/sdxl-vae"
 # Diffusers-format Hub repo (one folder per family pipeline).
 DIFFUSERS_REPO = "BiliSakura/TerraDiT"
 FAMILY_HUB_SUBFOLDER = {
-    "alpha": "TerraDiT-alpha",
-    "sigma": "TerraDiT-sigma",
-    "omega": "TerraDiT-omega",
+    "alpha": "TerraDiT-Alpha-XL",
+    "sigma": "TerraDiT-Sigma-XL",
+    "omega": "TerraDiT-Omega-XL",
 }
 # Release name -> Hub subfolder (omega_base is the SiT-B/2 Ω variant).
 VARIANT_HUB_SUBFOLDER = {
-    "alpha_xl": "TerraDiT-alpha",
-    "sigma_xl": "TerraDiT-sigma",
-    "omega_xl": "TerraDiT-omega",
-    "omega_base": "TerraDiT-omega-base",
+    "alpha_xl": "TerraDiT-Alpha-XL",
+    "sigma_xl": "TerraDiT-Sigma-XL",
+    "omega_xl": "TerraDiT-Omega-XL",
+    "omega_base": "TerraDiT-Omega-B",
 }
 
 # Released weights: name -> construction spec (also stored in each config.json).

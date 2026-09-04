@@ -29,7 +29,7 @@ python terradit/sigma_demo.py --random-points 12 --lat 40.71 --lon -74.01
 
 ```python
 from terradit import TerraDiTSigmaPipeline
-pipe = TerraDiTSigmaPipeline.from_pretrained("BiliSakura/TerraDiT", subfolder="TerraDiT-sigma")
+pipe = TerraDiTSigmaPipeline.from_pretrained("BiliSakura/TerraDiT", subfolder="TerraDiT-Sigma-XL")
 image = pipe("a dense residential neighborhood", points=[[120, 80, "building house"]]).images[0]
 ```
 

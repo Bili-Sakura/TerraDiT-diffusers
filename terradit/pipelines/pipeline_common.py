@@ -180,6 +180,9 @@ def resolve_hub_load(pretrained_model_name_or_path: str | os.PathLike | None, su
         return DIFFUSERS_REPO, subfolder if subfolder is not None else VARIANT_HUB_SUBFOLDER[path]
     if path in FAMILY_HUB_SUBFOLDER:
         return DIFFUSERS_REPO, subfolder if subfolder is not None else FAMILY_HUB_SUBFOLDER[path]
+    known_subs = set(FAMILY_HUB_SUBFOLDER.values()) | set(VARIANT_HUB_SUBFOLDER.values())
+    if path in known_subs:
+        return DIFFUSERS_REPO, path
     return path, subfolder
 
 
@@ -192,7 +195,7 @@ class TerraDiTPipelineBase(DiffusionPipeline):
 
     family: str = "alpha"
     hub_repo_id: str = DIFFUSERS_REPO
-    hub_subfolder: str = "TerraDiT-alpha"
+    hub_subfolder: str = "TerraDiT-Alpha-XL"
     model_cpu_offload_seq = "text_encoder->transformer->vae"
     _optional_components = ["vae", "text_encoder", "tokenizer"]
     _callback_tensor_inputs = ["latents", "prompt_embeds", "pooled_prompt_embeds"]
@@ -298,7 +301,7 @@ class TerraDiTPipelineBase(DiffusionPipeline):
                 Optional pre-constructed components (used by tests and conversion).
             subfolder (`str`, *optional*):
                 Hub subfolder. Defaults to this class's ``hub_subfolder``
-                (``TerraDiT-alpha`` / ``TerraDiT-sigma`` / ``TerraDiT-omega``).
+                (``TerraDiT-Alpha-XL`` / ``TerraDiT-Sigma-XL`` / ``TerraDiT-Omega-XL``).
             **kwargs:
                 Forwarded to [`DiffusionPipeline.from_pretrained`] for Diffusers folders.
 
