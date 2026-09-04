@@ -88,29 +88,92 @@ as `TerraDiT-Alpha-XL` / `TerraDiT-Sigma-XL` / `TerraDiT-Omega-XL` / `TerraDiT-O
 Convert a training checkpoint with
 `python scripts/convert_to_diffusers.py --ckpt omega_xl --out release/TerraDiT --repo-layout`.
 
-```python
-from terradit import TerraDiTAlphaPipeline
-import torch
+Coordinates below are tile pixels in `[0, 256)`, x to the right and y down. Tags follow
+the OSM `"<key> <value>"` convention (vocabulary in `osm/tag_vocab.pt`).
+`height` / `width` default to 256; other multiples of 16 interpolate the trained
+positional embeddings.
 
-pipe = TerraDiTAlphaPipeline.from_pretrained(
-    "BiliSakura/TerraDiT", subfolder="TerraDiT-Alpha-XL",
-)
+### TerraDiT-α — text
+
+```python
+import torch
+from terradit import TerraDiTAlphaPipeline
+
+pipe = TerraDiTAlphaPipeline.from_pretrained("BiliSakura/TerraDiT", subfolder="TerraDiT-Alpha-XL")
 pipe = pipe.to("cuda")
 image = pipe(
-    "The satellite image shows a coastal town with a marina and red-roofed houses.",
+    prompt="The satellite image shows a coastal town with a marina and red-roofed houses.",
     height=256,
-    width=256,  # other multiples of 16 interpolate the trained 256px positional embeddings
+    width=256,
+    num_inference_steps=100,
+    num_images_per_prompt=1,
+    guidance_scale=0.0,          # released default: no CFG
+    # negative_prompt="",        # used only when guidance_scale > 1
+    # prompt_embeds=y,           # or pass LongCLIP token + pooled embeds together
+    # pooled_prompt_embeds=yp,
+    generator=torch.Generator(device="cuda").manual_seed(42),
+    output_type="pil",
+).images[0]
+image.save("terradit_alpha.png")
+```
+
+### TerraDiT-Σ — text + geolocation + point prompts
+
+```python
+import torch
+from terradit import TerraDiTSigmaPipeline
+
+pipe = TerraDiTSigmaPipeline.from_pretrained("BiliSakura/TerraDiT", subfolder="TerraDiT-Sigma-XL")
+pipe = pipe.to("cuda")
+image = pipe(
+    prompt="The satellite image shows a suburban neighborhood with a school and a pond.",
+    lat=38.65,                   # WGS84; RANGE+ encodes these when loc_embed is omitted
+    lon=-90.31,
+    # loc_embed=loc,             # or pass a precomputed RANGE+ vector (1280,) / (B, 1280)
+    # range_model=range_model,   # optional live RANGE+ encoder
+    points=[                     # [x, y, "osm tag"] in tile pixels [0, 256)
+        [40, 40, "building house"],
+        [90, 170, "amenity school"],
+        [205, 215, "natural water"],
+    ],
+    # point_prompts=..., pos=..., mask=...,   # or precomputed sigma tensors (eval / dataset)
+    height=256,
+    width=256,
+    num_inference_steps=100,
     generator=torch.Generator(device="cuda").manual_seed(42),
 ).images[0]
 ```
 
-```python
-from terradit import TerraDiTSigmaPipeline, TerraDiTOmegaPipeline
+### TerraDiT-Ω — text + geolocation + any geospatial primitive
 
-sigma = TerraDiTSigmaPipeline.from_pretrained("BiliSakura/TerraDiT", subfolder="TerraDiT-Sigma-XL")
-omega = TerraDiTOmegaPipeline.from_pretrained("BiliSakura/TerraDiT", subfolder="TerraDiT-Omega-XL")
-# SiT-B/2 Ω variant:
-# TerraDiTOmegaPipeline.from_pretrained("BiliSakura/TerraDiT", subfolder="TerraDiT-Omega-B")
+```python
+import torch
+from terradit import TerraDiTOmegaPipeline
+
+pipe = TerraDiTOmegaPipeline.from_pretrained("BiliSakura/TerraDiT", subfolder="TerraDiT-Omega-XL")
+# SiT-B/2 variant: subfolder="TerraDiT-Omega-B"
+pipe = pipe.to("cuda")
+image = pipe(
+    prompt="A small town crossed by a river and a road bridge.",
+    lat=48.86,
+    lon=2.35,
+    # loc_embed=loc, range_model=range_model,
+    instances=[
+        {"type": "polygon",  "coords": [[20, 20], [110, 15], [120, 90], [30, 100]], "tag": "leisure park"},
+        {"type": "polyline", "coords": [[0, 30], [60, 110], [140, 170], [255, 235]], "tag": "waterway river"},
+        {"type": "bbox",     "coords": [[20, 170], [70, 215]], "tag": "building house"},
+        {"type": "point",    "coords": [200, 200], "tag": "amenity parking"},
+    ],
+    condition_type="omega",      # "omega" = all primitives; "box" = boxes+points; "point" = points
+    # dropout_probs=[...],       # explicit GALA dropout mask; overrides condition_type
+    # inst_text_embed=..., polygon_xy=..., polygon_xy_mask=...,
+    # polyline_xy=..., polyline_xy_mask=..., bbox_xyxy=..., point_xy=...,
+    # format_mask=..., instance_mask=...,    # or precomputed omega tensors (eval / dataset)
+    height=256,
+    width=256,
+    num_inference_steps=100,
+    generator=torch.Generator(device="cuda").manual_seed(42),
+).images[0]
 ```
 
 ```bash
