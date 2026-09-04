@@ -80,23 +80,37 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
 pip install -e .
 ```
 
-Weights download automatically from [MVRL/TerraDiT](https://huggingface.co/MVRL/TerraDiT) on
-first use (or fetch them up front with `python scripts/download_weights.py`). Inference
-goes through a native Diffusers custom pipeline (`TerraDiTPipeline`) with
-`FlowMatchEulerDiscreteScheduler` (100 Euler steps, no CFG, SDXL VAE). Convert a
-release or training checkpoint to a Hub-ready folder with
-`python scripts/convert_to_diffusers.py --ckpt omega_xl --out release/diffusers/omega_xl`.
+Inference uses one Diffusers pipeline class per family
+(`TerraDiTAlphaPipeline`, `TerraDiTSigmaPipeline`, `TerraDiTOmegaPipeline`)
+with `FlowMatchEulerDiscreteScheduler` (100 Euler steps, no CFG, SDXL VAE).
+Converted folders live on [BiliSakura/TerraDiT](https://huggingface.co/BiliSakura/TerraDiT)
+as `TerraDiT-alpha` / `TerraDiT-sigma` / `TerraDiT-omega` / `TerraDiT-omega-base`.
+Legacy release names (`alpha_xl`, …) still load from
+[MVRL/TerraDiT](https://huggingface.co/MVRL/TerraDiT). Convert a release or
+training checkpoint with
+`python scripts/convert_to_diffusers.py --ckpt omega_xl --out release/TerraDiT --repo-layout`.
 
 ```python
-from terradit import TerraDiTPipeline
+from terradit import TerraDiTAlphaPipeline
 import torch
 
-pipe = TerraDiTPipeline.from_checkpoint("alpha_xl")  # release name, .pt, or Diffusers dir
+pipe = TerraDiTAlphaPipeline.from_pretrained(
+    "BiliSakura/TerraDiT", subfolder="TerraDiT-alpha",
+)
 pipe = pipe.to("cuda")
 image = pipe(
     "The satellite image shows a coastal town with a marina and red-roofed houses.",
     generator=torch.Generator(device="cuda").manual_seed(42),
 ).images[0]
+```
+
+```python
+from terradit import TerraDiTSigmaPipeline, TerraDiTOmegaPipeline
+
+sigma = TerraDiTSigmaPipeline.from_pretrained("BiliSakura/TerraDiT", subfolder="TerraDiT-sigma")
+omega = TerraDiTOmegaPipeline.from_pretrained("BiliSakura/TerraDiT", subfolder="TerraDiT-omega")
+# SiT-B/2 Ω variant:
+# TerraDiTOmegaPipeline.from_pretrained("BiliSakura/TerraDiT", subfolder="TerraDiT-omega-base")
 ```
 
 ```bash
@@ -135,7 +149,8 @@ All released weights are EMA, fp16 safetensors with a `config.json` beside them;
 shares one SiT backbone (`terradit/models/sit.py`) and the Diffusers flow-matching Euler
 scheduler (100 steps, no classifier-free guidance). Convert them to a one-stop Diffusers
 folder (`transformer/`, `scheduler/scheduler_config.json`, `model_index.json`, `pipeline.py`)
-with `scripts/convert_to_diffusers.py` (`--include-aux` also writes the SDXL VAE and LongCLIP).
+with `scripts/convert_to_diffusers.py` (`--repo-layout` writes `TerraDiT-alpha` / `TerraDiT-sigma` /
+`TerraDiT-omega` / `TerraDiT-omega-base`; `--include-aux` also writes the SDXL VAE and LongCLIP).
 The derived data (tile ids + coordinates + `hf_idx`, OSM point rasters, instance geometry,
 RANGE+ embeddings, test splits) mirrors the layout the code expects; see
 [docs/DATA.md](docs/DATA.md) for the layout, provenance, and custom data.

@@ -24,7 +24,8 @@ import torch
 import torch.nn.functional as F
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from terradit.pipelines import TerraDiTPipeline
+from terradit.hf import DIFFUSERS_REPO, FAMILY_HUB_SUBFOLDER, VARIANT_HUB_SUBFOLDER
+from terradit.pipelines import TerraDiTOmegaPipeline
 from terradit.conditioning import (OMEGA_CONDITION_DROPOUTS, caption_embeds,
                                    load_range_model, pack_omega_instances,
                                    resolve_sample_index, tag_pooled_embeds)
@@ -61,7 +62,11 @@ CONDITION_DROPOUTS = OMEGA_CONDITION_DROPOUTS
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--ckpt", default="omega_xl", help="omega_xl | omega_base (auto-download) or a safetensors/.pt path")
+    ap.add_argument("--ckpt", default=DIFFUSERS_REPO,
+                    help=f"Hub repo ({DIFFUSERS_REPO}), release name (omega_xl|omega_base), or a safetensors/.pt path")
+    ap.add_argument("--subfolder", default=None,
+                    help=f"Hub subfolder (default: {FAMILY_HUB_SUBFOLDER['omega']}; "
+                         f"omega_base -> {VARIANT_HUB_SUBFOLDER['omega_base']})")
     ap.add_argument("--arch", default=None, help="override the arch in the release config")
     # manual inputs
     ap.add_argument("--example-json", default=None,
@@ -92,8 +97,9 @@ def main():
     B = args.num_images
     dropouts = CONDITION_DROPOUTS[args.condition_type]
 
-    pipe = TerraDiTPipeline.from_checkpoint(
+    pipe = TerraDiTOmegaPipeline.from_checkpoint(
         args.ckpt, family="omega", arch=args.arch, legacy=args.legacy, device=device,
+        subfolder=args.subfolder,
     )
     tokenizer, clip = pipe.tokenizer, pipe.text_encoder
 

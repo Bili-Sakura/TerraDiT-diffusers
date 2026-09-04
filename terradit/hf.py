@@ -23,6 +23,21 @@ MODEL_REPO = "MVRL/TerraDiT"
 DATA_REPO = "MVRL/TerraDiT-data"
 VAE_ID = "stabilityai/sdxl-vae"
 
+# Diffusers-format Hub repo (one folder per family pipeline).
+DIFFUSERS_REPO = "BiliSakura/TerraDiT"
+FAMILY_HUB_SUBFOLDER = {
+    "alpha": "TerraDiT-alpha",
+    "sigma": "TerraDiT-sigma",
+    "omega": "TerraDiT-omega",
+}
+# Release name -> Hub subfolder (omega_base is the SiT-B/2 Ω variant).
+VARIANT_HUB_SUBFOLDER = {
+    "alpha_xl": "TerraDiT-alpha",
+    "sigma_xl": "TerraDiT-sigma",
+    "omega_xl": "TerraDiT-omega",
+    "omega_base": "TerraDiT-omega-base",
+}
+
 # Released weights: name -> construction spec (also stored in each config.json).
 MODELS = {
     "alpha_xl":   dict(family="alpha", arch="SiT-XL/2"),

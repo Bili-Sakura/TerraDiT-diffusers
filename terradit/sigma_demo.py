@@ -21,7 +21,8 @@ import torch
 import torch.nn.functional as F
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from terradit.pipelines import TerraDiTPipeline
+from terradit.hf import DIFFUSERS_REPO, FAMILY_HUB_SUBFOLDER
+from terradit.pipelines import TerraDiTSigmaPipeline
 from terradit.conditioning import (caption_embeds, load_range_model, pack_sigma_points,
                                    resolve_sample_index, tag_pooled_embeds)
 from terradit.viz import render_sigma_inputs, save_images
@@ -60,7 +61,10 @@ def random_points(k, rng):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--ckpt", default="sigma_xl", help="sigma_xl (auto-download) or a safetensors/.pt path")
+    ap.add_argument("--ckpt", default=DIFFUSERS_REPO,
+                    help=f"Hub repo ({DIFFUSERS_REPO}), release name (sigma_xl), or a safetensors/.pt path")
+    ap.add_argument("--subfolder", default=None,
+                    help=f"Hub subfolder (default: {FAMILY_HUB_SUBFOLDER['sigma']})")
     ap.add_argument("--arch", default=None, help="override the arch in the release config")
     # manual inputs
     ap.add_argument("--prompt", default=None, help="global caption (default: EXAMPLE caption)")
@@ -90,8 +94,9 @@ def main():
     os.makedirs(args.out_dir, exist_ok=True)
     B = args.num_images
 
-    pipe = TerraDiTPipeline.from_checkpoint(
+    pipe = TerraDiTSigmaPipeline.from_checkpoint(
         args.ckpt, family="sigma", arch=args.arch, legacy=args.legacy, device=device,
+        subfolder=args.subfolder,
     )
     tokenizer, clip = pipe.tokenizer, pipe.text_encoder
 

@@ -1,4 +1,4 @@
-"""Diffusers-compatibility checks for TerraDiTPipeline (CPU, random weights)."""
+"""Diffusers-compatibility checks for TerraDiT family pipelines (CPU, random weights)."""
 from __future__ import annotations
 
 import json
@@ -11,13 +11,17 @@ from diffusers import AutoencoderKL, FlowMatchEulerDiscreteScheduler, FlowMatchH
 from diffusers.pipelines.pipeline_utils import ImagePipelineOutput
 from safetensors.torch import save_file
 
-from terradit.hf import is_diffusers_pipeline_dir
+from terradit.hf import DIFFUSERS_REPO, FAMILY_HUB_SUBFOLDER, VARIANT_HUB_SUBFOLDER, is_diffusers_pipeline_dir
 from terradit.models.transformer import TerraDiTTransformer2DModel
-from terradit.pipelines.pipeline_terradit import (
-    TerraDiTPipeline,
+from terradit.pipelines.pipeline_common import (
     flow_match_euler_denoise,
     paper_flow_sigmas,
+    pipeline_class_for_family,
+    resolve_hub_load,
 )
+from terradit.pipelines.pipeline_terradit_alpha import TerraDiTAlphaPipeline
+from terradit.pipelines.pipeline_terradit_omega import TerraDiTOmegaPipeline
+from terradit.pipelines.pipeline_terradit_sigma import TerraDiTSigmaPipeline
 import importlib.util
 
 _CONVERT = os.path.join(os.path.dirname(__file__), "..", "scripts", "convert_to_diffusers.py")
@@ -25,6 +29,12 @@ _spec = importlib.util.spec_from_file_location("convert_to_diffusers", _CONVERT)
 _convert_mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_convert_mod)
 convert_checkpoint = _convert_mod.convert_checkpoint
+
+FAMILY_CLS = {
+    "alpha": TerraDiTAlphaPipeline,
+    "sigma": TerraDiTSigmaPipeline,
+    "omega": TerraDiTOmegaPipeline,
+}
 
 
 def _tiny_transformer(family: str = "alpha", input_size: int = 4) -> TerraDiTTransformer2DModel:
@@ -59,10 +69,10 @@ def _prompt_embeds(batch: int = 1, seq: int = 8, dim: int = 768) -> tuple[torch.
     return y, yp
 
 
-def _pipeline(family: str = "alpha") -> TerraDiTPipeline:
+def _pipeline(family: str = "alpha"):
     transformer = _tiny_transformer(family)
     scheduler = FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, shift=1.0)
-    return TerraDiTPipeline(transformer=transformer, scheduler=scheduler, vae=_tiny_vae())
+    return FAMILY_CLS[family](transformer=transformer, scheduler=scheduler, vae=_tiny_vae())
 
 
 def test_paper_sigmas_match_released_linspace():
@@ -138,19 +148,23 @@ def test_scheduler_swap_heun():
     assert out.images.shape[0] == 1
 
 
-def test_save_load_roundtrip(tmp_path):
-    pipe = _pipeline("alpha")
-    out_dir = tmp_path / "pipe"
+@pytest.mark.parametrize("family,cls", list(FAMILY_CLS.items()))
+def test_save_load_roundtrip_each_family(tmp_path, family, cls):
+    pipe = _pipeline(family)
+    out_dir = tmp_path / family
     pipe.save_pretrained(out_dir)
     assert (out_dir / "model_index.json").is_file()
     assert (out_dir / "scheduler" / "scheduler_config.json").is_file()
     extra = [p for p in (out_dir / "scheduler").iterdir() if p.name != "scheduler_config.json"]
     assert extra == []
-    loaded = TerraDiTPipeline.from_pretrained(out_dir)
-    assert loaded.transformer.config.family == "alpha"
+    index = json.loads((out_dir / "model_index.json").read_text())
+    assert index["_class_name"] == cls.__name__
+    loaded = cls.from_pretrained(out_dir)
+    assert loaded.transformer.config.family == family
+    assert isinstance(loaded, cls)
     y, yp = _prompt_embeds()
     height = width = loaded.transformer.config.resolution
-    out = loaded(
+    call_kw = dict(
         prompt_embeds=y,
         pooled_prompt_embeds=yp,
         height=height,
@@ -158,6 +172,29 @@ def test_save_load_roundtrip(tmp_path):
         num_inference_steps=2,
         output_type="latent",
     )
+    if family != "alpha":
+        call_kw["loc_embed"] = torch.nn.functional.normalize(torch.randn(1, 1280), dim=-1)
+    if family == "sigma":
+        call_kw.update(
+            point_prompts=torch.nn.functional.normalize(torch.randn(1, 2, 768), dim=-1),
+            pos=torch.tensor([[[10, 12], [40, 50]]]),
+            mask=torch.zeros(1, 2),
+        )
+    if family == "omega":
+        n, p = 4, 64
+        call_kw.update(
+            inst_text_embed=torch.nn.functional.normalize(torch.randn(1, n, 768), dim=-1),
+            polygon_xy=torch.rand(1, n, p, 2) * 256,
+            polygon_xy_mask=torch.zeros(1, n, p, dtype=torch.bool),
+            polyline_xy=torch.rand(1, n, p, 2) * 256,
+            polyline_xy_mask=torch.zeros(1, n, p, dtype=torch.bool),
+            bbox_xyxy=torch.tensor([[[10.0, 10.0, 40.0, 40.0]] * n]),
+            point_xy=torch.rand(1, n, 2) * 256,
+            format_mask=torch.ones(1, n, 4),
+            instance_mask=torch.ones(1, n),
+            condition_type="point",
+        )
+    out = loaded(**call_kw)
     assert out.images.ndim == 4
 
 
@@ -212,7 +249,11 @@ def test_convert_legacy_safetensors(tmp_path):
     assert (dest / "transformer" / "config.json").is_file()
     sched_files = os.listdir(dest / "scheduler")
     assert sched_files == ["scheduler_config.json"]
-    loaded = TerraDiTPipeline.from_pretrained(str(dest), vae=_tiny_vae())
+    index = json.loads((dest / "model_index.json").read_text())
+    assert index["_class_name"] == "TerraDiTAlphaPipeline"
+    pipeline_src = (dest / "pipeline.py").read_text()
+    assert "TerraDiTAlphaPipeline" in pipeline_src
+    loaded = TerraDiTAlphaPipeline.from_pretrained(str(dest), vae=_tiny_vae())
     y, yp = _prompt_embeds()
     out = loaded(
         prompt_embeds=y,
@@ -223,6 +264,51 @@ def test_convert_legacy_safetensors(tmp_path):
         output_type="latent",
     )
     assert out.images.shape == (1, 4, 4, 4)
+
+
+def test_convert_repo_layout_writes_hub_subfolder(tmp_path):
+    transformer = _tiny_transformer("sigma")
+    src = tmp_path / "legacy"
+    src.mkdir()
+    sd = {k: v.contiguous().half() if v.is_floating_point() else v for k, v in transformer.state_dict().items()}
+    save_file(sd, src / "model.safetensors")
+    (src / "config.json").write_text(json.dumps({
+        "family": "sigma",
+        "arch": "SiT-B/2",
+        "legacy": False,
+        "loc_dim": 1280,
+        "omega_attn": "GALA",
+        "encoder_depth": 2,
+        "resolution": 32,
+        "num_classes": 1000,
+    }))
+    dest = tmp_path / "TerraDiT"
+    out = convert_checkpoint(
+        str(src), str(dest), family="sigma", arch="SiT-B/2",
+        include_aux=False, dtype=torch.float32, repo_layout=True,
+    )
+    assert os.path.basename(out) == FAMILY_HUB_SUBFOLDER["sigma"]
+    index = json.loads(open(os.path.join(out, "model_index.json")).read())
+    assert index["_class_name"] == "TerraDiTSigmaPipeline"
+
+
+def test_resolve_hub_load_defaults_family_subfolder():
+    assert resolve_hub_load(DIFFUSERS_REPO, None, "TerraDiT-alpha") == (DIFFUSERS_REPO, "TerraDiT-alpha")
+    assert resolve_hub_load(DIFFUSERS_REPO, "TerraDiT-omega-base", "TerraDiT-omega") == (
+        DIFFUSERS_REPO, "TerraDiT-omega-base",
+    )
+    assert resolve_hub_load("omega_base", None, "TerraDiT-omega") == (
+        DIFFUSERS_REPO, VARIANT_HUB_SUBFOLDER["omega_base"],
+    )
+    assert resolve_hub_load("alpha", None, "TerraDiT-sigma") == (DIFFUSERS_REPO, "TerraDiT-alpha")
+
+
+def test_pipeline_class_for_family():
+    assert pipeline_class_for_family("alpha") is TerraDiTAlphaPipeline
+    assert pipeline_class_for_family("sigma") is TerraDiTSigmaPipeline
+    assert pipeline_class_for_family("omega") is TerraDiTOmegaPipeline
+    with pytest.raises(ValueError):
+        pipeline_class_for_family("beta")
 
 
 def test_old_inference_modules_removed():

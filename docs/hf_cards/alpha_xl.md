@@ -28,8 +28,8 @@ python terradit/alpha_demo.py --prompt "a coastal town with a marina and red-roo
 ```
 
 ```python
-from terradit import TerraDiTPipeline
-pipe = TerraDiTPipeline.from_checkpoint("alpha_xl")
+from terradit import TerraDiTAlphaPipeline
+pipe = TerraDiTAlphaPipeline.from_pretrained("BiliSakura/TerraDiT", subfolder="TerraDiT-alpha")
 image = pipe("a coastal town with a marina and red-roofed houses").images[0]
 ```
 

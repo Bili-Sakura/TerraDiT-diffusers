@@ -22,11 +22,11 @@ import torch
 from torch.utils.data._utils.collate import default_collate
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from terradit.pipelines import TerraDiTPipeline
+from terradit.pipelines import pipeline_class_for_family
 from terradit.conditioning import OMEGA_CONDITION_DROPOUTS
 from terradit.data.dataset import build_dataset
 from terradit.training.train_terradit import build_model_kwargs
-from terradit.hf import load_git10m, GIT10M_REPO, GIT10M_REVISION
+from terradit.hf import DIFFUSERS_REPO, load_git10m, GIT10M_REPO, GIT10M_REVISION
 from terradit.viz import save_images
 
 # omega condition-type -> GALA dropout mask (omega=all, box=boxes+points, point=points)
@@ -45,7 +45,9 @@ def main():
     ap.add_argument("--family", required=True, choices=["alpha", "sigma", "omega"])
     ap.add_argument("--split", default="random", choices=["random", "spatial", "dense"])
     ap.add_argument("--ckpt", required=True,
-                    help="release name (alpha_xl/sigma_xl/omega_xl/omega_base), safetensors dir/file, or .pt")
+                    help=f"Hub repo ({DIFFUSERS_REPO}), release name (alpha_xl/…), safetensors dir/file, or .pt")
+    ap.add_argument("--subfolder", default=None,
+                    help="Hub subfolder (TerraDiT-alpha / TerraDiT-sigma / TerraDiT-omega / TerraDiT-omega-base)")
     ap.add_argument("--arch", default=None, help="override the arch stored in the release config")
     ap.add_argument("--data-root", required=True)
     ap.add_argument("--hf-cache-dir", default=None)
@@ -84,8 +86,10 @@ def main():
         else:
             sigma_kwargs = dict(point_source="instances")
 
-    pipe = TerraDiTPipeline.from_checkpoint(
+    pipe_cls = pipeline_class_for_family(args.family)
+    pipe = pipe_cls.from_checkpoint(
         args.ckpt, family=args.family, arch=args.arch, legacy=args.legacy, device=device,
+        subfolder=args.subfolder,
     )
     clip = pipe.text_encoder
 

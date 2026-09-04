@@ -28,8 +28,8 @@ python terradit/omega_demo.py --ckpt omega_base
 ```
 
 ```python
-from terradit import TerraDiTPipeline
-pipe = TerraDiTPipeline.from_checkpoint("omega_base")
+from terradit import TerraDiTOmegaPipeline
+pipe = TerraDiTOmegaPipeline.from_pretrained("BiliSakura/TerraDiT", subfolder="TerraDiT-omega-base")
 image = pipe("A small town crossed by a river.").images[0]
 ```
 

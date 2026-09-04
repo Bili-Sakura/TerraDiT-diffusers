@@ -1,22 +1,32 @@
 """Convert TerraDiT release / training checkpoints to a Diffusers pipeline folder.
 
-Each output directory is a self-contained variant that
-``DiffusionPipeline.from_pretrained`` / ``TerraDiTPipeline.from_pretrained`` can
-load. The scheduler folder contains only ``scheduler_config.json``.
+Each output directory is a self-contained family variant that
+``TerraDiTAlphaPipeline.from_pretrained`` / ``DiffusionPipeline.from_pretrained``
+can load. Hub layout::
 
-    # released Hub weights (auto-download) -> Diffusers layout
-    python scripts/convert_to_diffusers.py --ckpt omega_xl --out release/diffusers
+    BiliSakura/TerraDiT/TerraDiT-alpha
+    BiliSakura/TerraDiT/TerraDiT-sigma
+    BiliSakura/TerraDiT/TerraDiT-omega
+    BiliSakura/TerraDiT/TerraDiT-omega-base
+
+The scheduler folder contains only ``scheduler_config.json``.
+
+    # released Hub weights (auto-download) -> family folder
+    python scripts/convert_to_diffusers.py --ckpt omega_xl --out release/TerraDiT-omega
+
+    # write the four Hub subfolders under a repo root
+    python scripts/convert_to_diffusers.py --ckpt alpha_xl --out release/TerraDiT --repo-layout
 
     # training .pt
     python scripts/convert_to_diffusers.py --ckpt exps/run/checkpoints/0400000.pt \
-        --family omega --arch SiT-B/2 --out release/diffusers/omega_base
+        --family omega --arch SiT-B/2 --out release/TerraDiT-omega-base
 
     # include SDXL VAE + LongCLIP so the folder is one-stop
-    python scripts/convert_to_diffusers.py --ckpt alpha_xl --out release/diffusers --include-aux
+    python scripts/convert_to_diffusers.py --ckpt alpha_xl --out release/TerraDiT-alpha --include-aux
 
 Without ``--include-aux`` the folder holds the transformer, scheduler, model_index,
-and a ``pipeline.py`` re-export. ``TerraDiTPipeline.from_checkpoint`` then loads
-the VAE and LongCLIP from their Hub ids.
+and a ``pipeline.py`` re-export. ``from_checkpoint`` then loads the VAE and LongCLIP
+from their Hub ids.
 """
 from __future__ import annotations
 
@@ -30,11 +40,15 @@ import torch
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from terradit.hf import MODELS, VAE_ID
+from terradit.hf import FAMILY_HUB_SUBFOLDER, MODELS, VARIANT_HUB_SUBFOLDER, VAE_ID
 from terradit.models.transformer import TerraDiTTransformer2DModel
-from terradit.pipelines.pipeline_terradit import TerraDiTPipeline
+from terradit.pipelines.pipeline_common import PIPELINE_CLASS_NAME, PIPELINE_MODULE, pipeline_class_for_family
 
-PIPELINE_PY = '''# Copyright 2026 The TerraDiT Authors. All rights reserved.
+
+def _pipeline_py(family: str) -> str:
+    class_name = PIPELINE_CLASS_NAME[family]
+    module = PIPELINE_MODULE[family]
+    return f'''# Copyright 2026 The TerraDiT Authors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -48,27 +62,34 @@ PIPELINE_PY = '''# Copyright 2026 The TerraDiT Authors. All rights reserved.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Custom Diffusers pipeline entry point for a converted TerraDiT folder.
+"""Custom Diffusers pipeline entry point for a converted TerraDiT-{family} folder.
 
 Install the ``terradit`` package, then load with::
 
+    from terradit import {class_name}
+    pipe = {class_name}.from_pretrained(
+        "BiliSakura/TerraDiT",
+        subfolder="{FAMILY_HUB_SUBFOLDER[family]}",
+    )
+
+    # or
     from diffusers import DiffusionPipeline
     pipe = DiffusionPipeline.from_pretrained(
         model_dir,
-        custom_pipeline=f"{model_dir}/pipeline.py",
+        custom_pipeline=f"{{model_dir}}/pipeline.py",
         trust_remote_code=True,
     )
 """
 
-from terradit.pipelines.pipeline_terradit import TerraDiTPipeline
+from {module} import {class_name}
 
-__all__ = ["TerraDiTPipeline"]
+__all__ = ["{class_name}"]
 '''
 
 
-def _write_model_index(out_dir: str, include_aux: bool) -> None:
+def _write_model_index(out_dir: str, family: str, include_aux: bool) -> None:
     index = {
-        "_class_name": "TerraDiTPipeline",
+        "_class_name": PIPELINE_CLASS_NAME[family],
         "_diffusers_version": diffusers.__version__,
         "scheduler": ["diffusers", "FlowMatchEulerDiscreteScheduler"],
         "transformer": ["terradit.models.transformer", "TerraDiTTransformer2DModel"],
@@ -84,6 +105,16 @@ def _write_model_index(out_dir: str, include_aux: bool) -> None:
         f.write("\n")
 
 
+def resolve_out_dir(out_dir: str, family: str, repo_layout: bool, variant: str | None = None) -> str:
+    """Optionally nest ``TerraDiT-alpha`` / … under a Hub repo root."""
+    if not repo_layout:
+        return out_dir
+    sub = VARIANT_HUB_SUBFOLDER.get(variant or "", FAMILY_HUB_SUBFOLDER[family])
+    if os.path.basename(os.path.normpath(out_dir)) == sub:
+        return out_dir
+    return os.path.join(out_dir, sub)
+
+
 def convert_checkpoint(
     ckpt: str,
     out_dir: str,
@@ -93,8 +124,15 @@ def convert_checkpoint(
     legacy: bool | None = None,
     include_aux: bool = False,
     dtype: torch.dtype = torch.float16,
+    repo_layout: bool = False,
 ) -> str:
     """Write a Diffusers pipeline directory and return its path."""
+    if family is None and ckpt in MODELS:
+        family = MODELS[ckpt]["family"]
+    if family is None:
+        raise ValueError("Pass --family alpha|sigma|omega or a release name (alpha_xl, …).")
+
+    out_dir = resolve_out_dir(out_dir, family, repo_layout, variant=ckpt if ckpt in VARIANT_HUB_SUBFOLDER else None)
     os.makedirs(out_dir, exist_ok=True)
     transformer = TerraDiTTransformer2DModel.from_legacy_checkpoint(
         ckpt, family=family, arch=arch, legacy=legacy, torch_dtype=dtype,
@@ -107,19 +145,19 @@ def convert_checkpoint(
     for name in extra:
         os.remove(os.path.join(out_dir, "scheduler", name))
 
+    pipe_cls = pipeline_class_for_family(family)
     if include_aux:
-        pipe = TerraDiTPipeline.from_checkpoint(
+        pipe = pipe_cls.from_checkpoint(
             ckpt, family=family, arch=arch, legacy=legacy, load_aux=True,
             scheduler=scheduler,
         )
         pipe.transformer = transformer
         pipe.save_pretrained(out_dir, safe_serialization=True)
-        # save_pretrained rewrites model_index using registered modules; keep it.
     else:
-        _write_model_index(out_dir, include_aux=False)
+        _write_model_index(out_dir, family, include_aux=False)
 
     with open(os.path.join(out_dir, "pipeline.py"), "w") as f:
-        f.write(PIPELINE_PY)
+        f.write(_pipeline_py(family))
     return out_dir
 
 
@@ -133,6 +171,8 @@ def main() -> None:
     ap.add_argument("--legacy", action=argparse.BooleanOptionalAction, default=None)
     ap.add_argument("--include-aux", action="store_true",
                     help=f"also serialize SDXL VAE ({VAE_ID}) and LongCLIP")
+    ap.add_argument("--repo-layout", action="store_true",
+                    help="write under <out>/TerraDiT-alpha|sigma|omega(|-base)")
     ap.add_argument("--dtype", default="fp16", choices=["fp16", "bf16", "fp32"])
     args = ap.parse_args()
 
@@ -142,9 +182,11 @@ def main() -> None:
     out = convert_checkpoint(
         args.ckpt, args.out, family=args.family, arch=args.arch,
         legacy=args.legacy, include_aux=args.include_aux, dtype=dtype,
+        repo_layout=args.repo_layout,
     )
+    class_name = PIPELINE_CLASS_NAME[args.family]
     print(f"[convert] {args.ckpt} -> {out}")
-    print(f"[convert] load with: TerraDiTPipeline.from_pretrained({out!r})")
+    print(f"[convert] load with: {class_name}.from_pretrained({out!r})")
 
 
 if __name__ == "__main__":

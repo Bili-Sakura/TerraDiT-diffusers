@@ -28,8 +28,8 @@ python terradit/omega_demo.py --condition-type omega
 ```
 
 ```python
-from terradit import TerraDiTPipeline
-pipe = TerraDiTPipeline.from_checkpoint("omega_xl")
+from terradit import TerraDiTOmegaPipeline
+pipe = TerraDiTOmegaPipeline.from_pretrained("BiliSakura/TerraDiT", subfolder="TerraDiT-omega")
 image = pipe("A small town crossed by a river.", condition_type="omega").images[0]
 ```
 

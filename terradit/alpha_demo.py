@@ -13,7 +13,8 @@ import argparse
 import torch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from terradit.pipelines import TerraDiTPipeline
+from terradit.hf import DIFFUSERS_REPO, FAMILY_HUB_SUBFOLDER
+from terradit.pipelines import TerraDiTAlphaPipeline
 from terradit.viz import save_images
 
 # --------------------------------------------------------------------------- #
@@ -38,7 +39,10 @@ PROMPTS = [
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--ckpt", default="alpha_xl", help="alpha_xl (auto-download) or a safetensors/.pt path")
+    ap.add_argument("--ckpt", default=DIFFUSERS_REPO,
+                    help=f"Hub repo ({DIFFUSERS_REPO}), release name (alpha_xl), or a safetensors/.pt path")
+    ap.add_argument("--subfolder", default=None,
+                    help=f"Hub subfolder (default: {FAMILY_HUB_SUBFOLDER['alpha']})")
     ap.add_argument("--arch", default=None, help="override the arch in the release config")
     ap.add_argument("--prompt", nargs="+", default=None, help="free-text caption(s); default: PROMPTS above")
     ap.add_argument("--index", type=int, nargs="+", default=None,
@@ -69,8 +73,9 @@ def main():
     for c, cap in enumerate(prompts):
         print(f"[caption {c}] {cap[:140]}{'...' if len(cap) > 140 else ''}")
 
-    pipe = TerraDiTPipeline.from_checkpoint(
+    pipe = TerraDiTAlphaPipeline.from_checkpoint(
         args.ckpt, family="alpha", arch=args.arch, legacy=args.legacy, device=device,
+        subfolder=args.subfolder,
     )
     V = args.num_images
     generator = torch.Generator(device=device).manual_seed(args.seed)

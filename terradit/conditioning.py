@@ -222,8 +222,9 @@ def build_conditioning(family, spec, clip, tokenizer, device, *,
                        range_model=None, num_images=1, dropout_probs=None):
     """Build transformer conditioning kwargs (batched to num_images) for a family.
 
-    Returns a dict ready to splat into ``TerraDiTPipeline(..., **cond)`` or the
-    SiT forward: ``y``, ``y_pooled``, and family-specific geometry / location.
+    Returns a dict ready to splat into a family pipeline (``TerraDiTAlphaPipeline``,
+    ``TerraDiTSigmaPipeline``, ``TerraDiTOmegaPipeline``) or the SiT forward:
+    ``y``, ``y_pooled``, and family-specific geometry / location.
     """
     B = num_images
     y, y_pooled, _ = caption_embeds(clip, tokenizer, [spec.get("caption", "")], device)

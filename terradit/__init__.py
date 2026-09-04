@@ -1,4 +1,15 @@
 from terradit.models.transformer import TerraDiTTransformer2DModel
-from terradit.pipelines.pipeline_terradit import TerraDiTPipeline
+from terradit.pipelines import (
+    TerraDiTAlphaPipeline,
+    TerraDiTOmegaPipeline,
+    TerraDiTPipeline,
+    TerraDiTSigmaPipeline,
+)
 
-__all__ = ["TerraDiTPipeline", "TerraDiTTransformer2DModel"]
+__all__ = [
+    "TerraDiTPipeline",
+    "TerraDiTAlphaPipeline",
+    "TerraDiTSigmaPipeline",
+    "TerraDiTOmegaPipeline",
+    "TerraDiTTransformer2DModel",
+]

@@ -33,7 +33,7 @@ from torchvision.utils import make_grid
 from terradit.models.sit import SiT_models
 from terradit.models.encoders import load_encoders, encode_repa_targets
 from terradit.training.loss import SILoss
-from terradit.pipelines.pipeline_terradit import flow_match_euler_denoise
+from terradit.pipelines.pipeline_common import flow_match_euler_denoise
 from terradit.data.dataset import build_dataset, TOKENIZER_ID
 from terradit.families import FAMILY_CONSTRUCT
 from terradit.hf import (load_git10m, resolve_checkpoint, load_weights,
