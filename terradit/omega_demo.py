@@ -4,7 +4,8 @@ Instances are {"type": polygon|polyline|bbox|point, "coords": [[x, y], ...], "ta
 with x, y in tile pixels [0, 256) (x right, y down). A polygon/polyline implies its bbox
 and centre point; a bbox implies its centre point, so specify only the richest primitive.
 Edit EXAMPLE below, or pass --example-json / --instances. Geolocation is optional:
-with lat/lon the RANGE+ submodule encodes it live; otherwise zeros are used.
+with lat/lon RANGE+ encodes it live from the location-encoder safetensors + retrieval
+database; otherwise zeros are used.
 
     python terradit/omega_demo.py                                    # EXAMPLE below, omega_xl
     python terradit/omega_demo.py --subfolder TerraDiT-Omega-B       # SiT-B/2 GALA model

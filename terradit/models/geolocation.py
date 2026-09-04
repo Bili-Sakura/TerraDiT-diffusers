@@ -22,8 +22,12 @@ Hub folder (sigma / omega)::
     geolocation_encoder/
       config.json
       modeling_geolocation.py
-      satclip-vit16-l40.ckpt     # upload: microsoft/SatCLIP-ViT16-L40
+      model.safetensors          # upload: MVRL/satclip-loc-enc-vit16-l40
       range_db.npz               # upload: mvrl/RANGE-database (range_db_large.npz)
+
+The location tower is the extracted SatCLIP ViT16-L40 encoder (~5 MB safetensors),
+not the original full SatCLIP checkpoint (ViT image tower included). RANGE+ still
+needs the retrieval database.
 
 ``forward`` takes ``(lon, lat)`` in degrees, shape ``(batch, 2)``, and returns a
 1280-d RANGE+ embedding (1024-d retrieved image features + 256-d SatCLIP).
@@ -44,11 +48,17 @@ import torch.nn.functional as F
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.models.modeling_utils import ModelMixin
 
+LOC_ENCODER_REPO = "MVRL/satclip-loc-enc-vit16-l40"
+LOC_ENCODER_FILENAME = "model.safetensors"
+RANGE_DB_REPO = "mvrl/RANGE-database"
+RANGE_DB_FILENAME = "range_db_large.npz"
+
 GEO_WEIGHT_FILENAMES = (
     "diffusion_pytorch_model.safetensors",
     "model.safetensors",
     "diffusion_pytorch_model.bin",
     "pytorch_model.bin",
+    "satclip-vit16-l40.ckpt",
 )
 
 
@@ -231,9 +241,11 @@ def _strip_location_prefix(key: str) -> str:
 
 
 def _remap_location_state_dict(state: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-    """Map official SatCLIP location keys onto ``SatCLIPLocationEncoder``."""
+    """Map SatCLIP / RANGE location keys onto ``SatCLIPLocationEncoder``."""
     remapped: dict[str, torch.Tensor] = {}
     for key, value in state.items():
+        if not torch.is_tensor(value):
+            continue
         name = _strip_location_prefix(str(key))
         if name.startswith("visual.") or name.startswith("logit_scale") or name.startswith("head."):
             continue
@@ -244,12 +256,72 @@ def _remap_location_state_dict(state: dict[str, torch.Tensor]) -> dict[str, torc
     return remapped
 
 
-def geolocation_folder_has_weights(folder: str | Path) -> bool:
-    folder = Path(folder)
-    if not folder.is_dir():
+def _tensor_state(blob: Any) -> dict[str, torch.Tensor]:
+    if isinstance(blob, dict) and isinstance(blob.get("state_dict"), dict):
+        return blob["state_dict"]
+    if isinstance(blob, dict):
+        return {key: value for key, value in blob.items() if torch.is_tensor(value)}
+    return {}
+
+
+def _is_modelmixin_location_state(state: dict[str, Any]) -> bool:
+    return any(str(key).startswith("satclip.") for key in state)
+
+
+def _is_raw_location_state(state: dict[str, Any]) -> bool:
+    if _is_modelmixin_location_state(state):
         return False
-    names = list(GEO_WEIGHT_FILENAMES) + ["satclip-vit16-l40.ckpt"]
-    config_path = folder / "config.json"
+    return any(
+        str(key).startswith(("location.", "model.location.", "nnet.", "posenc."))
+        for key in state
+    )
+
+
+def _infer_location_hparams(state: dict[str, torch.Tensor]) -> dict[str, int]:
+    remapped = _remap_location_state_dict(state)
+    layer_ids: list[int] = []
+    hidden = None
+    in_dim = None
+    out_dim = None
+    for key, value in remapped.items():
+        if key.startswith("nnet.layers.") and key.endswith(".weight") and value.ndim == 2:
+            try:
+                layer_ids.append(int(key.split(".")[2]))
+            except (IndexError, ValueError):
+                pass
+            if key == "nnet.layers.0.weight":
+                hidden, in_dim = int(value.shape[0]), int(value.shape[1])
+        elif key == "nnet.last_layer.weight" and value.ndim == 2:
+            out_dim = int(value.shape[0])
+            if hidden is None:
+                hidden = int(value.shape[1])
+    legendre = int(round(in_dim ** 0.5)) if in_dim else 40
+    return {
+        "satclip_dim": out_dim or 256,
+        "nnet_hidden": hidden or 512,
+        "nnet_layers": (max(layer_ids) + 1) if layer_ids else 2,
+        "legendre_polys": legendre,
+    }
+
+
+def _load_weight_blob(path: str | Path) -> dict[str, Any]:
+    path = Path(path)
+    if path.suffix == ".safetensors":
+        from safetensors.torch import load_file
+
+        return {"state_dict": load_file(str(path), device="cpu"), "hyper_parameters": {}}
+    ckpt = torch.load(path, map_location="cpu", weights_only=False)
+    if isinstance(ckpt, dict) and ("state_dict" in ckpt or "hyper_parameters" in ckpt):
+        state = ckpt.get("state_dict") or _tensor_state(ckpt)
+        return {"state_dict": state, "hyper_parameters": dict(ckpt.get("hyper_parameters") or {})}
+    if isinstance(ckpt, dict):
+        return {"state_dict": _tensor_state(ckpt), "hyper_parameters": {}}
+    raise ValueError(f"Unrecognized location-encoder weights at {path}")
+
+
+def _config_weight_names(folder: str | Path) -> list[str]:
+    names = list(GEO_WEIGHT_FILENAMES)
+    config_path = Path(folder) / "config.json"
     if config_path.is_file():
         try:
             extra = json.loads(config_path.read_text(encoding="utf-8")).get("satclip_filename")
@@ -257,7 +329,23 @@ def geolocation_folder_has_weights(folder: str | Path) -> bool:
                 names.append(str(extra))
         except Exception:
             pass
-    return any((folder / name).is_file() for name in names)
+    return names
+
+
+def _find_weight_file(folder: str | Path, names: list[str] | None = None) -> Path | None:
+    folder = Path(folder)
+    for name in names or _config_weight_names(folder):
+        candidate = folder / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def geolocation_folder_has_weights(folder: str | Path) -> bool:
+    folder = Path(folder)
+    if not folder.is_dir():
+        return False
+    return _find_weight_file(folder) is not None
 
 
 class TerraDiTGeolocationModel(ModelMixin, ConfigMixin):
@@ -272,13 +360,13 @@ class TerraDiTGeolocationModel(ModelMixin, ConfigMixin):
         satclip_dim: int = 256,
         image_dim: int = 1024,
         legendre_polys: int = 40,
-        nnet_hidden: int = 256,
+        nnet_hidden: int = 512,
         nnet_layers: int = 2,
         beta: float = 0.5,
         semantic_temp: float = 12.0,
         geo_temp: float = 40.0,
         database_filename: str = "range_db.npz",
-        satclip_filename: str = "satclip-vit16-l40.ckpt",
+        satclip_filename: str = LOC_ENCODER_FILENAME,
     ) -> None:
         super().__init__()
         if embedding_dim != satclip_dim + image_dim:
@@ -324,27 +412,37 @@ class TerraDiTGeolocationModel(ModelMixin, ConfigMixin):
         self.satclip.load_state_dict(remapped, strict=False)
 
     @classmethod
-    def from_satclip_checkpoint(
+    def from_location_weights(
         cls,
         checkpoint: str | Path,
         *,
         database: str | Path | None = None,
         beta: float = 0.5,
         torch_dtype: torch.dtype | None = None,
+        **config_overrides: Any,
     ) -> "TerraDiTGeolocationModel":
-        ckpt = torch.load(checkpoint, map_location="cpu", weights_only=False)
-        hparams = dict(ckpt.get("hyper_parameters") or {})
+        """Load the location encoder from safetensors or a legacy Lightning ckpt."""
+        blob = _load_weight_blob(checkpoint)
+        state = blob["state_dict"]
+        hparams = dict(blob.get("hyper_parameters") or {})
+        inferred = _infer_location_hparams(state)
+        satclip_dim = int(config_overrides.get("satclip_dim", hparams.get("embed_dim", inferred["satclip_dim"])))
+        image_dim = int(config_overrides.get("image_dim", 1024))
         model = cls(
-            embedding_dim=1280,
-            satclip_dim=int(hparams.get("embed_dim", 256)),
-            image_dim=1024,
-            legendre_polys=int(hparams.get("legendre_polys", 40)),
-            nnet_hidden=int(hparams.get("capacity", 256)),
-            nnet_layers=int(hparams.get("num_hidden_layers", 2)),
-            beta=beta,
+            embedding_dim=int(config_overrides.get("embedding_dim", satclip_dim + image_dim)),
+            satclip_dim=satclip_dim,
+            image_dim=image_dim,
+            legendre_polys=int(
+                config_overrides.get("legendre_polys", hparams.get("legendre_polys", inferred["legendre_polys"]))
+            ),
+            nnet_hidden=int(config_overrides.get("nnet_hidden", hparams.get("capacity", inferred["nnet_hidden"]))),
+            nnet_layers=int(
+                config_overrides.get("nnet_layers", hparams.get("num_hidden_layers", inferred["nnet_layers"]))
+            ),
+            beta=float(config_overrides.get("beta", beta)),
+            satclip_filename=Path(checkpoint).name,
         )
-        state = ckpt.get("state_dict") or ckpt
-        if isinstance(state, dict):
+        if state:
             model._load_satclip_weights(state)
         if database is not None:
             model.attach_database(database)
@@ -354,27 +452,106 @@ class TerraDiTGeolocationModel(ModelMixin, ConfigMixin):
         return model
 
     @classmethod
+    def from_satclip_checkpoint(
+        cls,
+        checkpoint: str | Path,
+        *,
+        database: str | Path | None = None,
+        beta: float = 0.5,
+        torch_dtype: torch.dtype | None = None,
+    ) -> "TerraDiTGeolocationModel":
+        """Backward-compatible alias of :meth:`from_location_weights`."""
+        return cls.from_location_weights(
+            checkpoint, database=database, beta=beta, torch_dtype=torch_dtype
+        )
+
+    @classmethod
+    def from_hub(
+        cls,
+        *,
+        database: bool | str | Path = True,
+        cache_dir: str | Path | None = None,
+        local_dir: str | Path | None = None,
+        beta: float = 0.5,
+        torch_dtype: torch.dtype | None = None,
+        revision: str | None = None,
+    ) -> "TerraDiTGeolocationModel":
+        """Download the ViT16-L40 location encoder (and optionally the RANGE database)."""
+        from huggingface_hub import hf_hub_download
+
+        download_kw: dict[str, Any] = {}
+        if cache_dir is not None:
+            download_kw["cache_dir"] = str(cache_dir)
+        if local_dir is not None:
+            download_kw["local_dir"] = str(local_dir)
+        if revision is not None:
+            download_kw["revision"] = revision
+        weights = hf_hub_download(LOC_ENCODER_REPO, LOC_ENCODER_FILENAME, **download_kw)
+        db_path: str | Path | None = None
+        if database is True:
+            db_kw = dict(download_kw)
+            db_path = hf_hub_download(RANGE_DB_REPO, RANGE_DB_FILENAME, repo_type="dataset", **db_kw)
+        elif database:
+            db_path = database
+        return cls.from_location_weights(weights, database=db_path, beta=beta, torch_dtype=torch_dtype)
+
+    @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path: str | None = None, **kwargs):
         folder = Path(pretrained_model_name_or_path) if pretrained_model_name_or_path else None
+        name = str(pretrained_model_name_or_path or "")
+        if name in {LOC_ENCODER_REPO, f"{LOC_ENCODER_REPO}/{LOC_ENCODER_FILENAME}"}:
+            database = kwargs.pop("database", True)
+            return cls.from_hub(
+                database=database,
+                cache_dir=kwargs.pop("cache_dir", None),
+                local_dir=kwargs.pop("local_dir", None),
+                beta=float(kwargs.pop("beta", 0.5)),
+                torch_dtype=kwargs.get("torch_dtype"),
+                revision=kwargs.pop("revision", None),
+            )
         if folder is not None and folder.is_dir():
             config_guess: dict[str, Any] = {}
             config_path = folder / "config.json"
             if config_path.is_file():
                 config_guess = json.loads(config_path.read_text(encoding="utf-8"))
             ckpt_name = kwargs.pop("satclip_filename", None) or config_guess.get(
-                "satclip_filename", "satclip-vit16-l40.ckpt"
+                "satclip_filename", LOC_ENCODER_FILENAME
             )
-            ckpt_path = folder / str(ckpt_name)
-            has_weights = any((folder / name).is_file() for name in GEO_WEIGHT_FILENAMES)
-            if ckpt_path.is_file() and not has_weights:
-                model = cls.from_satclip_checkpoint(
-                    ckpt_path,
-                    database=None,
-                    beta=float(config_guess.get("beta", 0.5)),
-                    torch_dtype=kwargs.get("torch_dtype"),
-                )
-                model._maybe_attach_database_from_dir(folder)
-                return model
+            names = [str(ckpt_name), *GEO_WEIGHT_FILENAMES]
+            weight_path = _find_weight_file(folder, names)
+            if weight_path is not None:
+                blob = _load_weight_blob(weight_path)
+                state = blob["state_dict"]
+                if _is_raw_location_state(state) or weight_path.suffix in {".ckpt", ".pt"}:
+                    overrides = {
+                        key: config_guess[key]
+                        for key in (
+                            "embedding_dim",
+                            "satclip_dim",
+                            "image_dim",
+                            "legendre_polys",
+                            "nnet_hidden",
+                            "nnet_layers",
+                        )
+                        if key in config_guess
+                    }
+                    # Prefer shapes from the weight file over a stale skeleton config.
+                    overrides.update(_infer_location_hparams(state))
+                    satclip_dim = int(overrides["satclip_dim"])
+                    image_dim = int(overrides.get("image_dim", 1024))
+                    overrides["satclip_dim"] = satclip_dim
+                    overrides["image_dim"] = image_dim
+                    if int(overrides.get("embedding_dim", satclip_dim + image_dim)) != satclip_dim + image_dim:
+                        overrides["embedding_dim"] = satclip_dim + image_dim
+                    model = cls.from_location_weights(
+                        weight_path,
+                        database=None,
+                        beta=float(config_guess.get("beta", kwargs.get("beta", 0.5))),
+                        torch_dtype=kwargs.get("torch_dtype"),
+                        **overrides,
+                    )
+                    model._maybe_attach_database_from_dir(folder)
+                    return model
         model = super().from_pretrained(pretrained_model_name_or_path, **kwargs)
         model._maybe_attach_database_from_dir(pretrained_model_name_or_path)
         return model

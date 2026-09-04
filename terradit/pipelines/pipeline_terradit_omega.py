@@ -188,7 +188,7 @@ class TerraDiTOmegaPipeline(TerraDiTPipelineBase):
                 Precomputed RANGE+ embedding `(batch, 1280)` or `(1280,)`.
             range_model:
                 Optional live RANGE+ encoder. Defaults to `geolocation_encoder`, then
-                the RANGE git submodule.
+                downloads `MVRL/satclip-loc-enc-vit16-l40` plus the RANGE database.
             instances (`list[dict]`, *optional*):
                 Ω primitives: `{"type": "polygon|polyline|bbox|point", "coords": ..., "tag": ...}`.
             inst_text_embed / polygon_xy / ... / instance_mask:

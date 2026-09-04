@@ -28,7 +28,7 @@ plus component configs so VAE / LongCLIP / tokenizer / RANGE+ weights can be dro
     text_encoder/config.json                 # upload model.safetensors
     tokenizer/tokenizer_config.json          # vocab.json + merges.txt filled by convert
     transformer/config.json                  # upload diffusion_pytorch_model.safetensors
-    geolocation_encoder/config.json          # Σ / Ω: upload SatCLIP ckpt + range_db.npz
+    geolocation_encoder/config.json          # Σ / Ω: upload location-encoder safetensors + range_db.npz
 """
 
 from __future__ import annotations
@@ -229,6 +229,28 @@ def _ensure_tokenizer_vocab(tokenizer_dir: Path) -> None:
             return
 
 
+def _resolve_location_weights(satclip_ckpt: str | Path | None) -> Path | None:
+    satclip_ckpt = satclip_ckpt or os.environ.get("SATCLIP_CKPT") or os.environ.get("TERRADIT_SATCLIP_CKPT")
+    if not satclip_ckpt:
+        return None
+    if str(satclip_ckpt).lower() in {"hub", "download"}:
+        from huggingface_hub import hf_hub_download
+        from terradit.models.geolocation import LOC_ENCODER_FILENAME, LOC_ENCODER_REPO
+
+        return Path(hf_hub_download(LOC_ENCODER_REPO, LOC_ENCODER_FILENAME))
+    path = Path(satclip_ckpt)
+    if path.is_file():
+        return path
+    if path.is_dir():
+        from terradit.models.geolocation import GEO_WEIGHT_FILENAMES
+
+        for name in GEO_WEIGHT_FILENAMES:
+            candidate = path / name
+            if candidate.is_file():
+                return candidate
+    return None
+
+
 def write_geolocation_encoder(
     output_path: str | Path,
     family: str,
@@ -236,7 +258,7 @@ def write_geolocation_encoder(
     satclip_ckpt: str | Path | None = None,
     range_db: str | Path | None = None,
 ) -> Path | None:
-    """Write RANGE+ code + config for Σ / Ω. Optionally attach SatCLIP weights and the DB."""
+    """Write RANGE+ code + config for Σ / Ω. Optionally attach location-encoder weights and the DB."""
     family = (family or "alpha").lower()
     if family == "alpha":
         return None
@@ -248,11 +270,11 @@ def write_geolocation_encoder(
     assets = Path(__file__).resolve().parent / "hub_assets" / "geolocation_encoder"
     if assets.is_dir():
         _copy_asset_tree(assets, geo_dir)
-    satclip_ckpt = satclip_ckpt or os.environ.get("SATCLIP_CKPT") or os.environ.get("TERRADIT_SATCLIP_CKPT")
-    if satclip_ckpt and Path(satclip_ckpt).is_file():
+    weight_path = _resolve_location_weights(satclip_ckpt)
+    if weight_path is not None:
         from terradit.models.geolocation import TerraDiTGeolocationModel
 
-        model = TerraDiTGeolocationModel.from_satclip_checkpoint(satclip_ckpt)
+        model = TerraDiTGeolocationModel.from_location_weights(weight_path)
         model.save_pretrained(geo_dir)
         (geo_dir / "modeling_geolocation.py").write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
     if range_db and Path(range_db).is_file():
@@ -335,22 +357,9 @@ def write_model_index(output_path: str | Path, family: str) -> None:
     geo_dir = output_path / "geolocation_encoder"
     has_geo_weights = False
     if geo_dir.is_dir():
-        names = [
-            "diffusion_pytorch_model.safetensors",
-            "model.safetensors",
-            "diffusion_pytorch_model.bin",
-            "pytorch_model.bin",
-            "satclip-vit16-l40.ckpt",
-        ]
-        config_path = geo_dir / "config.json"
-        if config_path.is_file():
-            try:
-                extra = json.loads(config_path.read_text(encoding="utf-8")).get("satclip_filename")
-                if extra:
-                    names.append(str(extra))
-            except Exception:
-                pass
-        has_geo_weights = any((geo_dir / name).is_file() for name in names)
+        from terradit.models.geolocation import geolocation_folder_has_weights
+
+        has_geo_weights = geolocation_folder_has_weights(geo_dir)
     if family != "alpha" and has_geo_weights:
         index["geolocation_encoder"] = ["modeling_geolocation", "TerraDiTGeolocationModel"]
     else:

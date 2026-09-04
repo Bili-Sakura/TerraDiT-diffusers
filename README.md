@@ -87,7 +87,7 @@ Converted folders live on [BiliSakura/TerraDiT](https://huggingface.co/BiliSakur
 as `TerraDiT-Alpha-XL` / `TerraDiT-Sigma-XL` / `TerraDiT-Omega-XL` / `TerraDiT-Omega-B`.
 Each folder is a self-contained [SiT-diffusers](https://huggingface.co/BiliSakura/SiT-diffusers)-style
 repo: one `pipeline.py`, one `transformer/transformer_terradit_{alpha|sigma|omega}.py`, and on
-Σ / Ω a `geolocation_encoder/` folder for RANGE+ (SatCLIP location tower + retrieval DB).
+Σ / Ω a `geolocation_encoder/` folder for RANGE+ (SatCLIP location encoder + retrieval DB).
 VAE / LongCLIP / tokenizer configs are included so those weights can be uploaded beside them.
 Write the four Hub folders (code + configs, no weights) with
 `python scripts/convert_to_diffusers.py --skeleton --out release/TerraDiT`.
@@ -210,15 +210,15 @@ folders ship that encoder as its own component::
     geolocation_encoder/
       modeling_geolocation.py
       config.json
-      satclip-vit16-l40.ckpt    # microsoft/SatCLIP-ViT16-L40 (location tower)
+      model.safetensors         # MVRL/satclip-loc-enc-vit16-l40 (location encoder only)
       range_db.npz              # mvrl/RANGE-database (`range_db_large.npz`)
 
 `DiffusionPipeline.from_pretrained(..., trust_remote_code=True)` loads the code from that
 subfolder. Drop the two weight files in and `pipe(lat=..., lon=...)` runs RANGE+ with no
 extra install. Without those files (or without coordinates) the location embedding is
-zeros — in-distribution for Σ, which trained with location dropout. The
-[RANGE+](https://github.com/mvrl/RANGE) git submodule remains a fallback for the in-repo
-demos (`git submodule update --init`).
+zeros — in-distribution for Σ, which trained with location dropout. In-repo demos that
+are not loading a converted folder download the same location encoder and database from
+the Hub (no full SatCLIP checkpoint, and the RANGE git submodule is not required).
 
 ## Downloads
 
@@ -240,7 +240,9 @@ Convert them to a one-stop Diffusers folder (`pipeline.py`,
 (`--skeleton` writes code + configs only; `--repo-layout` writes `TerraDiT-Alpha-XL` /
 `TerraDiT-Sigma-XL` / `TerraDiT-Omega-XL` / `TerraDiT-Omega-B`; `--include-aux` also
 writes the SDXL VAE and LongCLIP weights; `--satclip-ckpt` / `--range-db` attach RANGE+
-weights into `geolocation_encoder/`).
+weights into `geolocation_encoder/` — `--satclip-ckpt` is the ~5 MB location encoder
+from [`MVRL/satclip-loc-enc-vit16-l40`](https://huggingface.co/MVRL/satclip-loc-enc-vit16-l40)
+(`hub` fetches it) rather than the original full SatCLIP checkpoint).
 The derived data (tile ids + coordinates + `hf_idx`, OSM point rasters, instance geometry,
 RANGE+ embeddings, test splits) mirrors the layout the code expects; see
 [docs/DATA.md](docs/DATA.md) for the layout, provenance, and custom data.
@@ -290,7 +292,7 @@ terradit/
   pipelines/  models/  conditioning.py  viz.py  Diffusers pipeline, SiT + GALA, overlays
   data/dataset.py  data/preprocessing/          data_root layout, packers, hf_idx tooling
   hf.py                                         pinned Hub repos/revision, weight loading
-  RANGE/                                        RANGE+ geolocation encoder (git submodule)
+  RANGE/                                        optional RANGE+ git submodule (inference uses Hub weights)
 scripts/   download_*.py  encode_latents.py  convert_to_diffusers.py  export_weights.py  train_*.sh  eval_all.sh  upload_hf.py
 configs/   accelerate presets (1 GPU / 4 GPU)
 docs/      DATA.md  TRAINING.md  hf_cards/

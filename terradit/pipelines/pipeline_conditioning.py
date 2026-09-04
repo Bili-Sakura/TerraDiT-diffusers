@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 
 import numpy as np
 import torch
@@ -33,16 +32,10 @@ MAX_POINTS = 64
 SIGMA_MAX_POINTS = 50
 OMEGA_CONDITION_DROPOUTS = {"omega": None, "box": [1.0, 1.0, 0.0, 0.0], "point": [1.0, 1.0, 1.0, 0.0]}
 
-
-def _default_range_dir() -> str:
-    here = os.path.dirname(os.path.abspath(__file__))
-    env = os.environ.get("TERRADIT_RANGE_DIR")
-    candidates = [env, os.path.join(os.path.dirname(here), "RANGE"), os.path.join(here, "RANGE")]
-    for candidate in candidates:
-        if candidate and os.path.isdir(os.path.join(candidate, "range")):
-            return candidate
-    return env or os.path.join(os.path.dirname(here), "RANGE")
-
+LOC_ENCODER_REPO = "MVRL/satclip-loc-enc-vit16-l40"
+LOC_ENCODER_FILENAME = "model.safetensors"
+RANGE_DB_REPO = "mvrl/RANGE-database"
+RANGE_DB_FILENAME = "range_db_large.npz"
 
 GEO_WEIGHT_FILENAMES = (
     "diffusion_pytorch_model.safetensors",
@@ -51,6 +44,45 @@ GEO_WEIGHT_FILENAMES = (
     "pytorch_model.bin",
     "satclip-vit16-l40.ckpt",
 )
+
+
+def _default_range_dir() -> str | None:
+    here = os.path.dirname(os.path.abspath(__file__))
+    env = os.environ.get("TERRADIT_RANGE_DIR") or os.environ.get("TERRADIT_RANGE_CACHE")
+    candidates = [env, os.path.join(os.path.dirname(here), "RANGE"), os.path.join(here, "RANGE")]
+    for candidate in candidates:
+        if candidate and os.path.isdir(candidate):
+            return candidate
+    return env
+
+
+def _local_geo_assets(root):
+    """Return (weights_path, db_path) from a cache / RANGE checkout, else (None, None)."""
+    if not root or not os.path.isdir(root):
+        return None, None
+    search = [root, os.path.join(root, "pretrained"), os.path.join(root, "geolocation_encoder")]
+    weights = None
+    db = None
+    weight_names = (LOC_ENCODER_FILENAME, "satclip-vit16-l40.ckpt", "diffusion_pytorch_model.safetensors")
+    db_names = ("range_db.npz", RANGE_DB_FILENAME, "range_db_large.npz")
+    for folder in search:
+        if not os.path.isdir(folder):
+            continue
+        if weights is None:
+            for name in weight_names:
+                path = os.path.join(folder, name)
+                if os.path.isfile(path):
+                    weights = path
+                    break
+        if db is None:
+            for name in db_names:
+                path = os.path.join(folder, name)
+                if os.path.isfile(path):
+                    db = path
+                    break
+        if weights and db:
+            break
+    return weights, db
 
 
 def geolocation_folder_has_weights(folder):
@@ -69,16 +101,19 @@ def geolocation_folder_has_weights(folder):
     return any(os.path.isfile(os.path.join(folder, name)) for name in names)
 
 
-def _import_geolocation_cls(geo_dir):
+def _import_geolocation_cls(geo_dir=None):
     """Load ``TerraDiTGeolocationModel`` from the Hub file or this repo (no ``terradit`` import)."""
     import importlib.util
 
     here = os.path.dirname(os.path.abspath(__file__))
     candidates = [
-        os.path.join(geo_dir, "modeling_geolocation.py"),
+        os.path.join(geo_dir, "modeling_geolocation.py") if geo_dir else "",
+        os.path.join(here, "geolocation_encoder", "modeling_geolocation.py"),
         os.path.join(here, "..", "models", "geolocation.py"),
     ]
     for path in candidates:
+        if not path:
+            continue
         path = os.path.abspath(path)
         if not os.path.isfile(path):
             continue
@@ -108,41 +143,37 @@ def load_geolocation_encoder(pretrained_path, *, torch_dtype=None):
 
 
 def load_range_model(device, *, beta=0.5, range_dir=None):
-    """Lazily load the RANGE+ git submodule. Prefer ``geolocation_encoder/`` on the Hub."""
+    """Load RANGE+ from the location-encoder safetensors + retrieval database.
+
+    Downloads ``MVRL/satclip-loc-enc-vit16-l40`` (location tower only) and
+    ``mvrl/RANGE-database`` unless matching files already exist under ``range_dir``.
+    """
     range_dir = range_dir or _default_range_dir()
-    if not os.path.isdir(os.path.join(range_dir, "range")):
-        print(
-            f"[range] RANGE submodule not found at {range_dir}.\n"
-            "        Fetch it with:  git submodule update --init --recursive\n"
-            "        (or set TERRADIT_RANGE_DIR). Geolocation falls back to zeros."
-        )
+    model_cls = _import_geolocation_cls(range_dir)
+    if model_cls is None:
+        print("[range] TerraDiTGeolocationModel not found; geolocation falls back to zeros.")
         return None
     try:
-        if range_dir not in sys.path:
-            sys.path.insert(0, range_dir)
-        from range.load_model import load_model  # noqa: E402
-        from huggingface_hub import hf_hub_download
+        local_weights, local_db = _local_geo_assets(range_dir)
+        local_dir = os.path.join(range_dir, "pretrained") if range_dir else None
+        if local_dir:
+            os.makedirs(local_dir, exist_ok=True)
+        if local_weights is not None:
+            if local_db is None:
+                from huggingface_hub import hf_hub_download
 
-        cache = os.path.join(range_dir, "pretrained")
-        ckpt = hf_hub_download(
-            "microsoft/SatCLIP-ViT16-L40",
-            "satclip-vit16-l40.ckpt",
-            repo_type="model",
-            local_dir=cache,
-        )
-        db = hf_hub_download(
-            "mvrl/RANGE-database",
-            "range_db_large.npz",
-            repo_type="dataset",
-            local_dir=cache,
-        )
-        return load_model(
-            model_name="RANGE+",
-            pretrained_path=ckpt,
-            device=device,
-            db_path=db,
-            beta=beta,
-        )
+                kw = {"repo_type": "dataset"}
+                if local_dir:
+                    kw["local_dir"] = local_dir
+                local_db = hf_hub_download(RANGE_DB_REPO, RANGE_DB_FILENAME, **kw)
+            model = model_cls.from_location_weights(local_weights, database=local_db, beta=beta)
+        else:
+            model = model_cls.from_hub(
+                database=local_db if local_db is not None else True,
+                local_dir=local_dir,
+                beta=beta,
+            )
+        return model.to(device).eval()
     except Exception as exc:
         print(
             f"[range] RANGE+ unavailable ({type(exc).__name__}: {exc}); "

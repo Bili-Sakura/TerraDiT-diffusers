@@ -530,6 +530,8 @@ def test_hub_skeleton_writes_family_transformer_module(tmp_path):
     geo_cfg = json.loads((tmp_path / "sigma" / "geolocation_encoder" / "config.json").read_text())
     assert geo_cfg["_class_name"] == "TerraDiTGeolocationModel"
     assert geo_cfg["embedding_dim"] == 1280
+    assert geo_cfg["nnet_hidden"] == 512
+    assert geo_cfg["satclip_filename"] == "model.safetensors"
 
     paths = write_repo_skeletons(tmp_path / "repo")
     names = {os.path.basename(p) for p in paths}
@@ -590,6 +592,57 @@ def test_geolocation_encoder_save_load_roundtrip(tmp_path):
     assert loaded.config.embedding_dim == 16
     assert loaded.config.legendre_polys == 2
     assert not loaded._has_database
+
+
+def test_geolocation_loads_mvrl_style_safetensors(tmp_path):
+    torch.manual_seed(0)
+    model = _tiny_geolocation()
+    sd = {f"location.{key}": value.contiguous() for key, value in model.satclip.state_dict().items()}
+    weights = tmp_path / "model.safetensors"
+    save_file(sd, weights)
+    loaded = TerraDiTGeolocationModel.from_location_weights(weights)
+    assert loaded.config.nnet_hidden == 8
+    assert loaded.config.satclip_dim == 8
+    assert loaded.config.legendre_polys == 2
+    assert loaded.config.nnet_layers == 1
+    folder = tmp_path / "geo"
+    folder.mkdir()
+    save_file(sd, folder / "model.safetensors")
+    (folder / "config.json").write_text(json.dumps({
+        "_class_name": "TerraDiTGeolocationModel",
+        "embedding_dim": 16,
+        "satclip_dim": 8,
+        "image_dim": 8,
+        "legendre_polys": 2,
+        "nnet_hidden": 8,
+        "nnet_layers": 1,
+    }))
+    via_folder = TerraDiTGeolocationModel.from_pretrained(folder)
+    assert via_folder.config.embedding_dim == 16
+    assert via_folder.config.satclip_dim == 8
+    for key in model.satclip.state_dict():
+        assert torch.allclose(loaded.satclip.state_dict()[key], model.satclip.state_dict()[key])
+
+
+def test_geolocation_infers_vit16_l40_hparams(tmp_path):
+    sd = {
+        "location.nnet.layers.0.weight": torch.zeros(512, 1600),
+        "location.nnet.layers.0.bias": torch.zeros(512),
+        "location.nnet.layers.1.weight": torch.zeros(512, 512),
+        "location.nnet.layers.1.bias": torch.zeros(512),
+        "location.nnet.last_layer.weight": torch.zeros(256, 512),
+        "location.nnet.last_layer.bias": torch.zeros(256),
+    }
+    path = tmp_path / "model.safetensors"
+    save_file(sd, path)
+    loaded = TerraDiTGeolocationModel.from_location_weights(path)
+    assert loaded.config.nnet_hidden == 512
+    assert loaded.config.nnet_layers == 2
+    assert loaded.config.legendre_polys == 40
+    assert loaded.config.satclip_dim == 256
+    assert loaded.config.embedding_dim == 1280
+    alias = TerraDiTGeolocationModel.from_satclip_checkpoint(path)
+    assert alias.config.nnet_hidden == 512
 
 
 def test_sigma_pipeline_uses_geolocation_encoder():
@@ -654,7 +707,22 @@ def test_converted_sigma_loads_with_optional_geolocation(tmp_path):
     assert out.images.shape == (1, 4, 4, 4)
 
 
-def test_converted_sigma_attaches_geolocation_weights(tmp_path):
+def test_write_geolocation_encoder_from_safetensors(tmp_path):
+    from terradit.pipelines.hub_export import write_geolocation_encoder, write_model_index
+
+    geo = _tiny_geolocation()
+    sd = {f"location.{key}": value.contiguous() for key, value in geo.satclip.state_dict().items()}
+    weights = tmp_path / "model.safetensors"
+    save_file(sd, weights)
+    dest = tmp_path / "sigma"
+    write_geolocation_encoder(dest, "sigma", satclip_ckpt=weights)
+    write_model_index(dest, "sigma")
+    assert (dest / "geolocation_encoder" / "modeling_geolocation.py").is_file()
+    loaded = TerraDiTGeolocationModel.from_pretrained(dest / "geolocation_encoder")
+    assert loaded.config.nnet_hidden == 8
+    assert loaded.config.satclip_dim == 8
+    index = json.loads((dest / "model_index.json").read_text())
+    assert index["geolocation_encoder"] == ["modeling_geolocation", "TerraDiTGeolocationModel"]
     src = _write_tiny_legacy(tmp_path, family="sigma")
     dest = tmp_path / "diffusers"
     convert_checkpoint(str(src), str(dest), family="sigma", arch="SiT-B/2", include_aux=False, dtype=torch.float32)
@@ -674,3 +742,36 @@ def test_converted_sigma_attaches_geolocation_weights(tmp_path):
     )
     assert loaded.geolocation_encoder is not None
     assert loaded.geolocation_encoder.config.embedding_dim == 16
+
+
+def test_converted_sigma_attaches_mvrl_safetensors(tmp_path):
+    src = _write_tiny_legacy(tmp_path, family="sigma")
+    dest = tmp_path / "diffusers"
+    convert_checkpoint(str(src), str(dest), family="sigma", arch="SiT-B/2", include_aux=False, dtype=torch.float32)
+    geo = _tiny_geolocation()
+    sd = {f"location.{key}": value.contiguous() for key, value in geo.satclip.state_dict().items()}
+    save_file(sd, dest / "geolocation_encoder" / "model.safetensors")
+    (dest / "geolocation_encoder" / "config.json").write_text(json.dumps({
+        "_class_name": "TerraDiTGeolocationModel",
+        "embedding_dim": 16,
+        "satclip_dim": 8,
+        "image_dim": 8,
+        "legendre_polys": 2,
+        "nnet_hidden": 8,
+        "nnet_layers": 1,
+        "database_filename": "range_db.npz",
+        "satclip_filename": "model.safetensors",
+    }))
+    from terradit.pipelines.hub_export import write_model_index
+
+    write_model_index(dest, "sigma")
+    loaded = TerraDiTSigmaPipeline.from_pretrained(
+        str(dest),
+        vae=_tiny_vae(),
+        text_encoder=None,
+        tokenizer=None,
+        trust_remote_code=True,
+    )
+    assert loaded.geolocation_encoder is not None
+    assert loaded.geolocation_encoder.config.satclip_dim == 8
+    assert loaded.geolocation_encoder.config.nnet_hidden == 8

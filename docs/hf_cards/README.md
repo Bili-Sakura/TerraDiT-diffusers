@@ -59,7 +59,8 @@ without installing this repo::
     )
 Sampling: `FlowMatchEulerDiscreteScheduler`, 100 steps, no classifier-free guidance, SDXL VAE decoder. Text encoder:
 LongCLIP (`zer0int/LongCLIP-KO-LITE-TypoAttack-Attn-ViT-L-14`, 144 tokens). Geolocation:
-RANGE+ (1280-d, `geolocation_encoder/`). See the [GitHub repo](https://github.com/mvrl/TerraDiT) for demos,
+RANGE+ (1280-d, `geolocation_encoder/`, location encoder from
+[`MVRL/satclip-loc-enc-vit16-l40`](https://huggingface.co/MVRL/satclip-loc-enc-vit16-l40)). See the [GitHub repo](https://github.com/mvrl/TerraDiT) for demos,
 evaluation, and training.
 
 ## Training data

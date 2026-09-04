@@ -168,7 +168,7 @@ class TerraDiTSigmaPipeline(TerraDiTPipelineBase):
                 Precomputed RANGE+ embedding `(batch, 1280)` or `(1280,)`.
             range_model:
                 Optional live RANGE+ encoder. Defaults to `geolocation_encoder`, then
-                the RANGE git submodule.
+                downloads `MVRL/satclip-loc-enc-vit16-l40` plus the RANGE database.
             points (`list`, *optional*):
                 Point prompts as `[x, y, tag]` or `(x, y, tag)` in tile pixels `[0, 256)`.
             point_prompts / pos / mask:

@@ -73,8 +73,9 @@ Which family needs what:
   sampled at train time; omega's `inst_metadata.npz` stores per-instance geometry
   (`geom_type`, `point_xy`, `bbox_xyxy`, `verts_xy`) plus the tag.
 * **Geolocation**: [RANGE+](https://github.com/mvrl/RANGE) embeddings (1280-d = SatCLIP
-  256 + RANGE retrieval 1024) of each tile's stored coordinate. Stored fp16; L2-normalised at load.
-  `scripts/precompute_range_plus.py` regenerates them for new tiles.
+  location encoder 256 + RANGE retrieval 1024) of each tile's stored coordinate. Stored fp16; L2-normalised at load.
+  `scripts/precompute_range_plus.py` regenerates them for new tiles (location encoder:
+  [`MVRL/satclip-loc-enc-vit16-l40`](https://huggingface.co/MVRL/satclip-loc-enc-vit16-l40)).
 * **Latents**: SDXL VAE (`stabilityai/sdxl-vae`) posterior `mean||std`, `[8, 32, 32]`
   per tile, fp16. Build with `scripts/encode_latents.py` (~33 GB for 2M tiles) or train
   with `--vae-on-the-fly`.
