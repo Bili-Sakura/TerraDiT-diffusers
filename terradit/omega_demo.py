@@ -7,7 +7,7 @@ Edit EXAMPLE below, or pass --example-json / --instances. Geolocation is optiona
 with lat/lon the RANGE+ submodule encodes it live; otherwise zeros are used.
 
     python terradit/omega_demo.py                                    # EXAMPLE below, omega_xl
-    python terradit/omega_demo.py --ckpt omega_base                  # SiT-B/2 GALA model
+    python terradit/omega_demo.py --subfolder TerraDiT-Omega-B       # SiT-B/2 GALA model
     python terradit/omega_demo.py --condition-type box               # drop polygons/polylines -> boxes+points
     python terradit/omega_demo.py --example-json my_scene.json --lat 51.5 --lon -0.12
     python terradit/omega_demo.py --data-root data/git10m --hf-cache-dir data/git10m/hf --index 0
@@ -24,12 +24,12 @@ import torch
 import torch.nn.functional as F
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from terradit.generation import (build_inference_model, load_text_vae, caption_embeds,
-                               tag_pooled_embeds, decode_latents, save_images,
-                               resolve_sample_index)
-from terradit.conditioning import build_conditioning, pack_omega_instances, load_range_model
-from terradit.sampling.samplers import euler_sampler
-from terradit.viz import render_omega_inputs, active_from_dropouts
+from terradit.hf import DIFFUSERS_REPO, FAMILY_HUB_SUBFOLDER, VARIANT_HUB_SUBFOLDER
+from terradit.pipelines import TerraDiTOmegaPipeline
+from terradit.conditioning import (OMEGA_CONDITION_DROPOUTS, caption_embeds,
+                                   load_range_model, pack_omega_instances,
+                                   resolve_sample_index, tag_pooled_embeds)
+from terradit.viz import active_from_dropouts, render_omega_inputs, save_images
 
 # --------------------------------------------------------------------------- #
 # Example input: one of every primitive. Tags follow the OSM "key value" convention.
@@ -57,13 +57,16 @@ EXAMPLE = {
     ],
 }
 
-CONDITION_DROPOUTS = {"omega": None, "box": [1.0, 1.0, 0.0, 0.0], "point": [1.0, 1.0, 1.0, 0.0]}
+CONDITION_DROPOUTS = OMEGA_CONDITION_DROPOUTS
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--ckpt", default="omega_xl", help="omega_xl | omega_base (auto-download) or a safetensors/.pt path")
-    ap.add_argument("--arch", default=None, help="override the arch in the release config")
+    ap.add_argument("--ckpt", default=DIFFUSERS_REPO,
+                    help=f"Hub repo ({DIFFUSERS_REPO}) or a local Diffusers folder")
+    ap.add_argument("--subfolder", default=None,
+                    help=f"Hub subfolder (default: {FAMILY_HUB_SUBFOLDER['omega']}; "
+                         f"SiT-B/2 -> {VARIANT_HUB_SUBFOLDER['omega_base']})")
     # manual inputs
     ap.add_argument("--example-json", default=None,
                     help="JSON file with {caption, lat, lon, instances} (default: EXAMPLE above)")
@@ -83,7 +86,6 @@ def main():
     ap.add_argument("--num-steps", type=int, default=100)
     ap.add_argument("--out-dir", default="samples/omega")
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--legacy", action=argparse.BooleanOptionalAction, default=None)
     ap.add_argument("--no-show-inputs", action="store_true", help="skip the geometry-overlay PNG/TXT")
     args = ap.parse_args()
 
@@ -93,8 +95,10 @@ def main():
     B = args.num_images
     dropouts = CONDITION_DROPOUTS[args.condition_type]
 
-    model = build_inference_model("omega", args.arch, args.ckpt, device, legacy=args.legacy)
-    tokenizer, clip, vae = load_text_vae(device)
+    pipe = TerraDiTOmegaPipeline.from_pretrained(args.ckpt, subfolder=args.subfolder)
+    pipe._ensure_aux(device)
+    pipe = pipe.to(device)
+    tokenizer, clip = pipe.tokenizer, pipe.text_encoder
 
     if args.data_root is None:
         # ---- manual mode (EXAMPLE / JSON / CLI) ----
@@ -110,18 +114,20 @@ def main():
         lat, lon = spec.get("lat"), spec.get("lon")
         range_model = None
         if not args.no_range and lat is not None and lon is not None:
-            range_model = load_range_model(device)
+            if getattr(pipe, "geolocation_encoder", None) is None:
+                range_model = load_range_model(device)
         instances = spec["instances"]
-        cond = build_conditioning("omega", spec, clip, tokenizer, device, range_model=range_model,
-                                  num_images=B, dropout_probs=dropouts)
+        pipe_kwargs = dict(prompt=spec.get("caption", ""), instances=instances,
+                           lat=lat, lon=lon, range_model=range_model, dropout_probs=dropouts)
         g = pack_omega_instances(instances, torch.device("cpu"))
         viz = dict(polygon_xy=g["polygon_xy"], polygon_xy_mask=g["polygon_xy_mask"],
                    polyline_xy=g["polyline_xy"], polyline_xy_mask=g["polyline_xy_mask"],
                    bbox_xyxy=g["bbox_xyxy"], point_xy=g["point_xy"],
                    instance_mask=g["instance_mask"], tags=g["tags"])
         caption = spec.get("caption", "")
+        using_range = range_model is not None or getattr(pipe, "geolocation_encoder", None) is not None
         srcdesc = (f"manual ({len(instances)} instances, "
-                   f"{'RANGE+ ' + str((lat, lon)) if range_model is not None else 'no geolocation'})")
+                   f"{'RANGE+ ' + str((lat, lon)) if using_range and lat is not None else 'no geolocation'})")
     else:
         # ---- dataset mode ----
         from terradit.hf import load_git10m
@@ -141,15 +147,20 @@ def main():
         inst_text_embed = tag_pooled_embeds(clip, inst_tag_ids.to(device), inst_tag_attn.to(device))
         loc = F.normalize(torch.from_numpy(ds.location_embeddings[idx]).float(), dim=-1)
 
-        def rb(t):
-            return t.unsqueeze(0).to(device).repeat(B, *([1] * t.dim()))
-        cond = dict(y=y.repeat(B, 1, 1), y_pooled=y_pooled.repeat(B, 1),
-                    loc_embed=loc.unsqueeze(0).to(device).repeat(B, 1),
-                    inst_text_embed=inst_text_embed.unsqueeze(0).repeat(B, 1, 1),
-                    polygon_xy=rb(polygon_xy), polygon_xy_mask=rb(polygon_xy_mask),
-                    polyline_xy=rb(polyline_xy), polyline_xy_mask=rb(polyline_xy_mask),
-                    bbox_xyxy=rb(bbox_xyxy), point_xy=rb(point_xy), format_mask=rb(format_mask),
-                    instance_mask=rb(instance_mask), dropout_probs=dropouts)
+        pipe_kwargs = dict(
+            prompt_embeds=y, pooled_prompt_embeds=y_pooled,
+            loc_embed=loc.unsqueeze(0).to(device),
+            inst_text_embed=inst_text_embed.unsqueeze(0),
+            polygon_xy=polygon_xy.unsqueeze(0).to(device),
+            polygon_xy_mask=polygon_xy_mask.unsqueeze(0).to(device),
+            polyline_xy=polyline_xy.unsqueeze(0).to(device),
+            polyline_xy_mask=polyline_xy_mask.unsqueeze(0).to(device),
+            bbox_xyxy=bbox_xyxy.unsqueeze(0).to(device),
+            point_xy=point_xy.unsqueeze(0).to(device),
+            format_mask=format_mask.unsqueeze(0).to(device),
+            instance_mask=instance_mask.unsqueeze(0).to(device),
+            dropout_probs=dropouts,
+        )
         viz = dict(polygon_xy=polygon_xy, polygon_xy_mask=polygon_xy_mask,
                    polyline_xy=polyline_xy, polyline_xy_mask=polyline_xy_mask,
                    bbox_xyxy=bbox_xyxy, point_xy=point_xy, instance_mask=instance_mask,
@@ -157,11 +168,17 @@ def main():
         caption = args.prompt or ds.caption(idx)
         srcdesc = f"dataset sample {idx} ({ds.metadata[idx].get('img_name')})"
 
-    xT = torch.randn(B, model.in_channels, 32, 32, device=device)
-    with torch.no_grad():
-        samples = euler_sampler(model, xT, num_steps=args.num_steps, cfg_scale=0.0,
-                                path_type="linear", **cond).to(torch.float32)
-        imgs = decode_latents(vae, samples, device)
+    generator = torch.Generator(device=device).manual_seed(args.seed)
+    out = pipe(
+        num_images_per_prompt=B,
+        num_inference_steps=args.num_steps,
+        guidance_scale=0.0,
+        generator=generator,
+        output_type="pt",
+        condition_type=args.condition_type,
+        **pipe_kwargs,
+    )
+    imgs = out.images
 
     paths = [os.path.join(args.out_dir, f"omega_{args.condition_type}_{i:02d}.png") for i in range(B)]
     save_images(imgs, paths)

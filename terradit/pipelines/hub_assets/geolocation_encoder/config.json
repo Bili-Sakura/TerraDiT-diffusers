@@ -1,0 +1,14 @@
+{
+  "_class_name": "TerraDiTGeolocationModel",
+  "embedding_dim": 1280,
+  "satclip_dim": 256,
+  "image_dim": 1024,
+  "legendre_polys": 40,
+  "nnet_hidden": 256,
+  "nnet_layers": 2,
+  "beta": 0.5,
+  "semantic_temp": 12.0,
+  "geo_temp": 40.0,
+  "database_filename": "range_db.npz",
+  "satclip_filename": "satclip-vit16-l40.ckpt"
+}

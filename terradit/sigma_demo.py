@@ -21,12 +21,11 @@ import torch
 import torch.nn.functional as F
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from terradit.generation import (build_inference_model, load_text_vae, caption_embeds,
-                               tag_pooled_embeds, decode_latents, save_images,
-                               resolve_sample_index)
-from terradit.conditioning import build_conditioning, pack_sigma_points, load_range_model
-from terradit.sampling.samplers import euler_sampler
-from terradit.viz import render_sigma_inputs
+from terradit.hf import DIFFUSERS_REPO, FAMILY_HUB_SUBFOLDER
+from terradit.pipelines import TerraDiTSigmaPipeline
+from terradit.conditioning import (caption_embeds, load_range_model, pack_sigma_points,
+                                   resolve_sample_index, tag_pooled_embeds)
+from terradit.viz import render_sigma_inputs, save_images
 
 # --------------------------------------------------------------------------- #
 # Example input. Tags follow the OSM "key value" convention used in training
@@ -62,8 +61,10 @@ def random_points(k, rng):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--ckpt", default="sigma_xl", help="sigma_xl (auto-download) or a safetensors/.pt path")
-    ap.add_argument("--arch", default=None, help="override the arch in the release config")
+    ap.add_argument("--ckpt", default=DIFFUSERS_REPO,
+                    help=f"Hub repo ({DIFFUSERS_REPO}) or a local Diffusers folder")
+    ap.add_argument("--subfolder", default=None,
+                    help=f"Hub subfolder (default: {FAMILY_HUB_SUBFOLDER['sigma']})")
     # manual inputs
     ap.add_argument("--prompt", default=None, help="global caption (default: EXAMPLE caption)")
     ap.add_argument("--points", default=None, help='JSON list of [x, y, "tag"] (default: EXAMPLE points)')
@@ -82,7 +83,6 @@ def main():
     ap.add_argument("--num-steps", type=int, default=100)
     ap.add_argument("--out-dir", default="samples/sigma")
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--legacy", action=argparse.BooleanOptionalAction, default=None)
     ap.add_argument("--no-show-inputs", action="store_true", help="skip the point-overlay PNG/TXT")
     args = ap.parse_args()
 
@@ -92,8 +92,10 @@ def main():
     os.makedirs(args.out_dir, exist_ok=True)
     B = args.num_images
 
-    model = build_inference_model("sigma", args.arch, args.ckpt, device, legacy=args.legacy)
-    tokenizer, clip, vae = load_text_vae(device)
+    pipe = TerraDiTSigmaPipeline.from_pretrained(args.ckpt, subfolder=args.subfolder)
+    pipe._ensure_aux(device)
+    pipe = pipe.to(device)
+    tokenizer, clip = pipe.tokenizer, pipe.text_encoder
 
     if args.data_root is None:
         # ---- manual mode (EXAMPLE / CLI) ----
@@ -110,13 +112,13 @@ def main():
             lat = lon = None  # a custom prompt without coords -> no location
         range_model = None
         if not args.no_range and lat is not None and lon is not None:
-            range_model = load_range_model(device)
-        spec = {"caption": caption, "points": points, "lat": lat, "lon": lon}
-        cond = build_conditioning("sigma", spec, clip, tokenizer, device,
-                                  range_model=range_model, num_images=B)
+            if getattr(pipe, "geolocation_encoder", None) is None:
+                range_model = load_range_model(device)
         coords_raw, mask_raw, point_tags = pack_sigma_points(points, torch.device("cpu"))
+        using_range = range_model is not None or getattr(pipe, "geolocation_encoder", None) is not None
         srcdesc = (f"manual ({len(points)} points, "
-                   f"{'RANGE+ ' + str((lat, lon)) if range_model is not None else 'no geolocation'})")
+                   f"{'RANGE+ ' + str((lat, lon)) if using_range and lat is not None else 'no geolocation'})")
+        pipe_kwargs = dict(prompt=caption, points=points, lat=lat, lon=lon, range_model=range_model)
     else:
         # ---- dataset mode ----
         from terradit.hf import load_git10m
@@ -136,19 +138,26 @@ def main():
             y_pooled = F.normalize(out.pooler_output, dim=-1)
         loc = F.normalize(torch.from_numpy(ds.location_embeddings[idx]).float(), dim=-1)
         point_embed = tag_pooled_embeds(clip, p_ids.to(device), p_attn.to(device))
-        cond = dict(y=y.repeat(B, 1, 1), y_pooled=y_pooled.repeat(B, 1),
-                    loc_embed=loc.unsqueeze(0).to(device).repeat(B, 1),
-                    point_prompts=point_embed.unsqueeze(0).repeat(B, 1, 1),
-                    pos=pos.unsqueeze(0).to(device).repeat(B, 1, 1),
-                    mask=mask.unsqueeze(0).to(device).repeat(B, 1))
+        pipe_kwargs = dict(
+            prompt_embeds=y, pooled_prompt_embeds=y_pooled,
+            loc_embed=loc.unsqueeze(0).to(device),
+            point_prompts=point_embed.unsqueeze(0),
+            pos=pos.unsqueeze(0).to(device),
+            mask=mask.unsqueeze(0).to(device),
+        )
         caption = args.prompt or ds.caption(idx)
         srcdesc = f"dataset sample {idx} ({ds.metadata[idx].get('img_name')})"
 
-    xT = torch.randn(B, model.in_channels, 32, 32, device=device)
-    with torch.no_grad():
-        samples = euler_sampler(model, xT, num_steps=args.num_steps, cfg_scale=0.0,
-                                path_type="linear", **cond).to(torch.float32)
-        imgs = decode_latents(vae, samples, device)
+    generator = torch.Generator(device=device).manual_seed(args.seed)
+    out = pipe(
+        num_images_per_prompt=B,
+        num_inference_steps=args.num_steps,
+        guidance_scale=0.0,
+        generator=generator,
+        output_type="pt",
+        **pipe_kwargs,
+    )
+    imgs = out.images
 
     paths = [os.path.join(args.out_dir, f"sigma_{i:02d}.png") for i in range(B)]
     save_images(imgs, paths)

@@ -14,6 +14,13 @@ import json
 
 import torch
 
+from terradit.pipelines.constants import (
+    DIFFUSERS_REPO,
+    FAMILY_HUB_SUBFOLDER,
+    VARIANT_HUB_SUBFOLDER,
+    VAE_ID,
+)
+
 # --------------------------------------------------------------------------- #
 # Pinned repositories
 # --------------------------------------------------------------------------- #
@@ -48,6 +55,11 @@ def load_git10m(cache_dir=None, repo_id=GIT10M_REPO, revision=GIT10M_REVISION):
 # --------------------------------------------------------------------------- #
 # Weights
 # --------------------------------------------------------------------------- #
+def is_diffusers_pipeline_dir(path):
+    """True when ``path`` is a Diffusers folder (has ``model_index.json``)."""
+    return os.path.isdir(path) and os.path.isfile(os.path.join(path, "model_index.json"))
+
+
 def checkpoint_dir(name, checkpoints_root="checkpoints"):
     return os.path.join(checkpoints_root, name)
 
@@ -70,6 +82,13 @@ def resolve_checkpoint(name_or_path, checkpoints_root="checkpoints", auto_downlo
     if os.path.isfile(name_or_path):
         return name_or_path
     if os.path.isdir(name_or_path):
+        if is_diffusers_pipeline_dir(name_or_path):
+            transformer_dir = os.path.join(name_or_path, "transformer")
+            for fname in ("diffusion_pytorch_model.safetensors", WEIGHTS_FILE):
+                cand = os.path.join(transformer_dir, fname)
+                if os.path.isfile(cand):
+                    return cand
+            raise FileNotFoundError(f"{name_or_path} is a Diffusers folder but has no transformer weights")
         cand = os.path.join(name_or_path, WEIGHTS_FILE)
         if os.path.isfile(cand):
             return cand

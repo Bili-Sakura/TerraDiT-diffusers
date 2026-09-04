@@ -13,9 +13,9 @@ import argparse
 import torch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from terradit.generation import (build_inference_model, load_text_vae, caption_embeds,
-                               decode_latents, save_images)
-from terradit.sampling.samplers import euler_sampler
+from terradit.hf import DIFFUSERS_REPO, FAMILY_HUB_SUBFOLDER
+from terradit.pipelines import TerraDiTAlphaPipeline
+from terradit.viz import save_images
 
 # --------------------------------------------------------------------------- #
 # Example inputs. Git-10M captions are long and descriptive; the model responds best
@@ -39,8 +39,10 @@ PROMPTS = [
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--ckpt", default="alpha_xl", help="alpha_xl (auto-download) or a safetensors/.pt path")
-    ap.add_argument("--arch", default=None, help="override the arch in the release config")
+    ap.add_argument("--ckpt", default=DIFFUSERS_REPO,
+                    help=f"Hub repo ({DIFFUSERS_REPO}) or a local Diffusers folder")
+    ap.add_argument("--subfolder", default=None,
+                    help=f"Hub subfolder (default: {FAMILY_HUB_SUBFOLDER['alpha']})")
     ap.add_argument("--prompt", nargs="+", default=None, help="free-text caption(s); default: PROMPTS above")
     ap.add_argument("--index", type=int, nargs="+", default=None,
                     help="use the real Git-10M captions of these <data-root>/metadata/alpha.json rows")
@@ -50,8 +52,6 @@ def main():
     ap.add_argument("--num-steps", type=int, default=100)
     ap.add_argument("--out-dir", default="samples/alpha")
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--legacy", action=argparse.BooleanOptionalAction, default=None,
-                    help="override the legacy flag (only for old pre-fix weights)")
     args = ap.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -70,20 +70,21 @@ def main():
     for c, cap in enumerate(prompts):
         print(f"[caption {c}] {cap[:140]}{'...' if len(cap) > 140 else ''}")
 
-    model = build_inference_model("alpha", args.arch, args.ckpt, device, legacy=args.legacy)
-    tokenizer, clip, vae = load_text_vae(device)
-
+    pipe = TerraDiTAlphaPipeline.from_pretrained(args.ckpt, subfolder=args.subfolder)
+    pipe._ensure_aux(device)
+    pipe = pipe.to(device)
     V = args.num_images
-    y, y_pooled, _ = caption_embeds(clip, tokenizer, prompts, device)
-    y = y.repeat_interleave(V, dim=0)
-    y_pooled = y_pooled.repeat_interleave(V, dim=0)
-    B = y.shape[0]
-    xT = torch.randn(B, model.in_channels, 32, 32, device=device)
-
-    with torch.no_grad():
-        samples = euler_sampler(model, xT, y, y_pooled=y_pooled, num_steps=args.num_steps,
-                                cfg_scale=0.0, path_type="linear").to(torch.float32)
-        imgs = decode_latents(vae, samples, device)
+    generator = torch.Generator(device=device).manual_seed(args.seed)
+    out = pipe(
+        prompt=prompts,
+        num_images_per_prompt=V,
+        num_inference_steps=args.num_steps,
+        guidance_scale=0.0,
+        generator=generator,
+        output_type="pt",
+    )
+    imgs = out.images
+    B = imgs.shape[0] if torch.is_tensor(imgs) else len(imgs)
 
     paths = [os.path.join(args.out_dir, f"alpha_c{c:02d}_v{v:02d}.png")
              for c in range(len(prompts)) for v in range(V)]

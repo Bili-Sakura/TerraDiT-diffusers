@@ -25,13 +25,17 @@ SOURCES = {}   # name -> training checkpoint path; pass with --source name=path
 
 def verify(name, src_path, out_path, config, device):
     """Same random input through original-EMA fp32 model and exported fp16 weights (cast to fp32)."""
-    from terradit.generation import build_inference_model
+    from terradit.models.legacy import load_legacy_transformer
     torch.manual_seed(0)
     fam, arch = config["family"], config["arch"]
-    ref = build_inference_model(fam, arch, src_path, device, legacy=config["legacy"],
-                                loc_dim=config["loc_dim"], omega_attn=config["omega_attn"])
-    new = build_inference_model(fam, arch, out_path, device, legacy=config["legacy"],
-                                loc_dim=config["loc_dim"], omega_attn=config["omega_attn"])
+    ref = load_legacy_transformer(
+        src_path, family=fam, arch=arch, legacy=config["legacy"],
+        loc_dim=config["loc_dim"], omega_attn=config["omega_attn"])
+    new = load_legacy_transformer(
+        out_path, family=fam, arch=arch, legacy=config["legacy"],
+        loc_dim=config["loc_dim"], omega_attn=config["omega_attn"])
+    ref = ref.to(device)
+    new = new.to(device)
     B, D = 2, 768
     x = torch.randn(B, 4, 32, 32, device=device)
     t = torch.rand(B, device=device)

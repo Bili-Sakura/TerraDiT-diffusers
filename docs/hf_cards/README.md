@@ -1,6 +1,6 @@
 ---
 license: cc-by-nc-4.0
-library_name: pytorch
+library_name: diffusers
 pipeline_tag: text-to-image
 tags:
   - satellite-imagery
@@ -43,13 +43,23 @@ python terradit/omega_demo.py            # downloads omega_xl on first use
 ```
 
 ```python
-from terradit.generation import build_inference_model
-model = build_inference_model("omega", None, "omega_xl", "cuda")   # name -> auto-download
+from terradit import TerraDiTOmegaPipeline
+pipe = TerraDiTOmegaPipeline.from_pretrained("BiliSakura/TerraDiT", subfolder="TerraDiT-Omega-XL")
+pipe = pipe.to("cuda")
+image = pipe("A small town crossed by a river and a road bridge.").images[0]
 ```
 
-Sampling: Euler, 100 steps, no classifier-free guidance, SDXL VAE decoder. Text encoder:
+A converted Diffusers folder is self-contained (one `pipeline.py` +
+`transformer/transformer_terradit_omega.py` + `geolocation_encoder/` on Σ / Ω) and loads
+without installing this repo::
+
+    from diffusers import DiffusionPipeline
+    pipe = DiffusionPipeline.from_pretrained(
+        "BiliSakura/TerraDiT", subfolder="TerraDiT-Omega-XL", trust_remote_code=True,
+    )
+Sampling: `FlowMatchEulerDiscreteScheduler`, 100 steps, no classifier-free guidance, SDXL VAE decoder. Text encoder:
 LongCLIP (`zer0int/LongCLIP-KO-LITE-TypoAttack-Attn-ViT-L-14`, 144 tokens). Geolocation:
-RANGE+ (1280-d). See the [GitHub repo](https://github.com/mvrl/TerraDiT) for demos,
+RANGE+ (1280-d, `geolocation_encoder/`). See the [GitHub repo](https://github.com/mvrl/TerraDiT) for demos,
 evaluation, and training.
 
 ## Training data

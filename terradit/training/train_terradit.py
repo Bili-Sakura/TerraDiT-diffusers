@@ -33,7 +33,7 @@ from torchvision.utils import make_grid
 from terradit.models.sit import SiT_models
 from terradit.models.encoders import load_encoders, encode_repa_targets
 from terradit.training.loss import SILoss
-from terradit.sampling.samplers import euler_sampler
+from terradit.pipelines.pipeline_common import flow_match_euler_denoise
 from terradit.data.dataset import build_dataset, TOKENIZER_ID
 from terradit.families import FAMILY_CONSTRUCT
 from terradit.hf import (load_git10m, resolve_checkpoint, load_weights,
@@ -104,8 +104,7 @@ def sample_grid(model, vae, viz_kwargs, latents_scale, latents_bias, latent_size
     y = viz_kwargs["y"]
     xT = torch.randn(y.shape[0], 4, latent_size, latent_size, device=device)
     kw = {k: v for k, v in viz_kwargs.items() if k != "y"}
-    samples = euler_sampler(model, xT, y, num_steps=num_steps, cfg_scale=0.0,
-                            path_type="linear", **kw).to(torch.float32)
+    samples = flow_match_euler_denoise(model, xT, num_inference_steps=num_steps, y=y, **kw).to(torch.float32)
     imgs = vae.decode((samples - latents_bias) / latents_scale).sample
     if was_training:
         model.train()

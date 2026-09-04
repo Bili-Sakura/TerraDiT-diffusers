@@ -1,6 +1,6 @@
 ---
 license: cc-by-nc-4.0
-library_name: pytorch
+library_name: diffusers
 pipeline_tag: text-to-image
 tags: [satellite-imagery, remote-sensing, diffusion-transformer, geospatial]
 datasets: [lcybuaa/Git-10M, MVRL/TerraDiT-data]
@@ -28,12 +28,14 @@ python terradit/sigma_demo.py --random-points 12 --lat 40.71 --lon -74.01
 ```
 
 ```python
-from terradit.generation import build_inference_model
-model = build_inference_model("sigma", None, "sigma_xl", "cuda")
+from terradit import TerraDiTSigmaPipeline
+pipe = TerraDiTSigmaPipeline.from_pretrained("BiliSakura/TerraDiT", subfolder="TerraDiT-Sigma-XL")
+image = pipe("a dense residential neighborhood", points=[[120, 80, "building house"]]).images[0]
 ```
 
 Files: `model.safetensors` (state dict, keys as in `terradit/models/sit.py`, REPA projectors
-removed) and `config.json` (construction flags read by `build_inference_model`).
+removed) and `config.json`, or a converted Diffusers folder from
+`scripts/convert_to_diffusers.py` (RANGE+ lives in `geolocation_encoder/`).
 
 ## Evaluation
 

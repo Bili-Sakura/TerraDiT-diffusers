@@ -1,6 +1,6 @@
 ---
 license: cc-by-nc-4.0
-library_name: pytorch
+library_name: diffusers
 pipeline_tag: text-to-image
 tags: [satellite-imagery, remote-sensing, diffusion-transformer, geospatial]
 datasets: [lcybuaa/Git-10M, MVRL/TerraDiT-data]
@@ -24,16 +24,18 @@ Trained from scratch for 400k steps, lr 2e-5, effective batch 256, REPA. This is
 ## Use
 
 ```bash
-python terradit/omega_demo.py --ckpt omega_base
+python terradit/omega_demo.py --subfolder TerraDiT-Omega-B
 ```
 
 ```python
-from terradit.generation import build_inference_model
-model = build_inference_model("omega", None, "omega_base", "cuda")
+from terradit import TerraDiTOmegaPipeline
+pipe = TerraDiTOmegaPipeline.from_pretrained("BiliSakura/TerraDiT", subfolder="TerraDiT-Omega-B")
+image = pipe("A small town crossed by a river.").images[0]
 ```
 
 Files: `model.safetensors` (state dict, keys as in `terradit/models/sit.py`, REPA projectors
-removed) and `config.json` (construction flags read by `build_inference_model`).
+removed) and `config.json`, or a converted Diffusers folder from
+`scripts/convert_to_diffusers.py` (RANGE+ lives in `geolocation_encoder/`).
 
 ## Evaluation
 
