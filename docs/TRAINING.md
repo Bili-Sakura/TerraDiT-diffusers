@@ -56,7 +56,8 @@ stay random), starts a fresh optimizer, and resets the step counter to 0.
 * `--resume` continues the latest checkpoint of `--exp-name` (optimizer state included when
   present); `--resume-step N` picks a specific one.
 * `--max-samples N` trains on the first N metadata rows (subset fine-tunes, smoke tests).
-* `--checkpointing-steps`, `--sampling-steps` (wandb sample grid), `--log-every`.
+* `--checkpointing-steps`, `--sampling-steps` (wandb sample grid via the Diffusers
+  flow-matching Euler loop), `--log-every`.
 * `--legacy` / `--no-legacy` override the adaLN conditioning flag (only for loading the
   pre-fix weights; all released models are `legacy=False`).
 * `--freeze-except <substr> ...` trains only parameters whose name contains a substring

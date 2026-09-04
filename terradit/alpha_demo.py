@@ -13,9 +13,8 @@ import argparse
 import torch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from terradit.generation import (build_inference_model, load_text_vae, caption_embeds,
-                               decode_latents, save_images)
-from terradit.sampling.samplers import euler_sampler
+from terradit.pipelines import TerraDiTPipeline
+from terradit.viz import save_images
 
 # --------------------------------------------------------------------------- #
 # Example inputs. Git-10M captions are long and descriptive; the model responds best
@@ -70,20 +69,21 @@ def main():
     for c, cap in enumerate(prompts):
         print(f"[caption {c}] {cap[:140]}{'...' if len(cap) > 140 else ''}")
 
-    model = build_inference_model("alpha", args.arch, args.ckpt, device, legacy=args.legacy)
-    tokenizer, clip, vae = load_text_vae(device)
-
+    pipe = TerraDiTPipeline.from_checkpoint(
+        args.ckpt, family="alpha", arch=args.arch, legacy=args.legacy, device=device,
+    )
     V = args.num_images
-    y, y_pooled, _ = caption_embeds(clip, tokenizer, prompts, device)
-    y = y.repeat_interleave(V, dim=0)
-    y_pooled = y_pooled.repeat_interleave(V, dim=0)
-    B = y.shape[0]
-    xT = torch.randn(B, model.in_channels, 32, 32, device=device)
-
-    with torch.no_grad():
-        samples = euler_sampler(model, xT, y, y_pooled=y_pooled, num_steps=args.num_steps,
-                                cfg_scale=0.0, path_type="linear").to(torch.float32)
-        imgs = decode_latents(vae, samples, device)
+    generator = torch.Generator(device=device).manual_seed(args.seed)
+    out = pipe(
+        prompt=prompts,
+        num_images_per_prompt=V,
+        num_inference_steps=args.num_steps,
+        guidance_scale=0.0,
+        generator=generator,
+        output_type="pt",
+    )
+    imgs = out.images
+    B = imgs.shape[0] if torch.is_tensor(imgs) else len(imgs)
 
     paths = [os.path.join(args.out_dir, f"alpha_c{c:02d}_v{v:02d}.png")
              for c in range(len(prompts)) for v in range(V)]

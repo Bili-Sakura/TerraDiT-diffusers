@@ -81,7 +81,23 @@ pip install -e .
 ```
 
 Weights download automatically from [MVRL/TerraDiT](https://huggingface.co/MVRL/TerraDiT) on
-first use (or fetch them up front with `python scripts/download_weights.py`).
+first use (or fetch them up front with `python scripts/download_weights.py`). Inference
+goes through a native Diffusers custom pipeline (`TerraDiTPipeline`) with
+`FlowMatchEulerDiscreteScheduler` (100 Euler steps, no CFG, SDXL VAE). Convert a
+release or training checkpoint to a Hub-ready folder with
+`python scripts/convert_to_diffusers.py --ckpt omega_xl --out release/diffusers/omega_xl`.
+
+```python
+from terradit import TerraDiTPipeline
+import torch
+
+pipe = TerraDiTPipeline.from_checkpoint("alpha_xl")  # release name, .pt, or Diffusers dir
+pipe = pipe.to("cuda")
+image = pipe(
+    "The satellite image shows a coastal town with a marina and red-roofed houses.",
+    generator=torch.Generator(device="cuda").manual_seed(42),
+).images[0]
+```
 
 ```bash
 # α: text -> image (built-in prompts; edit PROMPTS in the file or pass --prompt)
@@ -116,10 +132,13 @@ Hub. Without coordinates, or with `--no-range`, a zero embedding is used.
 | Imagery | [lcybuaa/Git-10M](https://huggingface.co/datasets/lcybuaa/Git-10M) @ `29f192b8` | `data/git10m/hf/` | `python -c "from terradit.hf import load_git10m; load_git10m('data/git10m/hf')"` |
 
 All released weights are EMA, fp16 safetensors with a `config.json` beside them; every family
-shares one SiT backbone (`terradit/models/sit.py`) and one sampler (Euler, 100 steps, no
-classifier-free guidance). The derived data (tile ids + coordinates + `hf_idx`, OSM point
-rasters, instance geometry, RANGE+ embeddings, test splits) mirrors the layout the code
-expects; see [docs/DATA.md](docs/DATA.md) for the layout, provenance, and custom data.
+shares one SiT backbone (`terradit/models/sit.py`) and the Diffusers flow-matching Euler
+scheduler (100 steps, no classifier-free guidance). Convert them to a one-stop Diffusers
+folder (`transformer/`, `scheduler/scheduler_config.json`, `model_index.json`, `pipeline.py`)
+with `scripts/convert_to_diffusers.py` (`--include-aux` also writes the SDXL VAE and LongCLIP).
+The derived data (tile ids + coordinates + `hf_idx`, OSM point rasters, instance geometry,
+RANGE+ embeddings, test splits) mirrors the layout the code expects; see
+[docs/DATA.md](docs/DATA.md) for the layout, provenance, and custom data.
 
 **Imagery is not re-hosted.** Download the exact Git-10M snapshot we used: every metadata row
 carries an `hf_idx` that indexes revision `29f192b8d2aa28b5d4d8c8d7f0f608cdc61fb52f` of the
@@ -163,11 +182,11 @@ terradit/
   alpha_demo.py  sigma_demo.py  omega_demo.py   demos (edit the EXAMPLE / PROMPTS at the top)
   evaluate.py  generate.py  eval/metrics.py    test-split generation + FID/CLIP/LPIPS/SSIM
   train.py  training/                           unified trainer (REPA loss, EMA, accelerate)
-  models/  sampling/  conditioning.py  viz.py   SiT + GALA, Euler sampler, spec -> conditioning, overlays
+  pipelines/  models/  conditioning.py  viz.py  Diffusers pipeline, SiT + GALA, overlays
   data/dataset.py  data/preprocessing/          data_root layout, packers, hf_idx tooling
   hf.py                                         pinned Hub repos/revision, weight loading
   RANGE/                                        RANGE+ geolocation encoder (git submodule)
-scripts/   download_*.py  encode_latents.py  export_weights.py  train_*.sh  eval_all.sh  upload_hf.py
+scripts/   download_*.py  encode_latents.py  convert_to_diffusers.py  export_weights.py  train_*.sh  eval_all.sh  upload_hf.py
 configs/   accelerate presets (1 GPU / 4 GPU)
 docs/      DATA.md  TRAINING.md  hf_cards/
 ```

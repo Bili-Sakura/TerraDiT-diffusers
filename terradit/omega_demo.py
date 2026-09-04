@@ -24,12 +24,11 @@ import torch
 import torch.nn.functional as F
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from terradit.generation import (build_inference_model, load_text_vae, caption_embeds,
-                               tag_pooled_embeds, decode_latents, save_images,
-                               resolve_sample_index)
-from terradit.conditioning import build_conditioning, pack_omega_instances, load_range_model
-from terradit.sampling.samplers import euler_sampler
-from terradit.viz import render_omega_inputs, active_from_dropouts
+from terradit.pipelines import TerraDiTPipeline
+from terradit.conditioning import (OMEGA_CONDITION_DROPOUTS, caption_embeds,
+                                   load_range_model, pack_omega_instances,
+                                   resolve_sample_index, tag_pooled_embeds)
+from terradit.viz import active_from_dropouts, render_omega_inputs, save_images
 
 # --------------------------------------------------------------------------- #
 # Example input: one of every primitive. Tags follow the OSM "key value" convention.
@@ -57,7 +56,7 @@ EXAMPLE = {
     ],
 }
 
-CONDITION_DROPOUTS = {"omega": None, "box": [1.0, 1.0, 0.0, 0.0], "point": [1.0, 1.0, 1.0, 0.0]}
+CONDITION_DROPOUTS = OMEGA_CONDITION_DROPOUTS
 
 
 def main():
@@ -93,8 +92,10 @@ def main():
     B = args.num_images
     dropouts = CONDITION_DROPOUTS[args.condition_type]
 
-    model = build_inference_model("omega", args.arch, args.ckpt, device, legacy=args.legacy)
-    tokenizer, clip, vae = load_text_vae(device)
+    pipe = TerraDiTPipeline.from_checkpoint(
+        args.ckpt, family="omega", arch=args.arch, legacy=args.legacy, device=device,
+    )
+    tokenizer, clip = pipe.tokenizer, pipe.text_encoder
 
     if args.data_root is None:
         # ---- manual mode (EXAMPLE / JSON / CLI) ----
@@ -112,8 +113,8 @@ def main():
         if not args.no_range and lat is not None and lon is not None:
             range_model = load_range_model(device)
         instances = spec["instances"]
-        cond = build_conditioning("omega", spec, clip, tokenizer, device, range_model=range_model,
-                                  num_images=B, dropout_probs=dropouts)
+        pipe_kwargs = dict(prompt=spec.get("caption", ""), instances=instances,
+                           lat=lat, lon=lon, range_model=range_model, dropout_probs=dropouts)
         g = pack_omega_instances(instances, torch.device("cpu"))
         viz = dict(polygon_xy=g["polygon_xy"], polygon_xy_mask=g["polygon_xy_mask"],
                    polyline_xy=g["polyline_xy"], polyline_xy_mask=g["polyline_xy_mask"],
@@ -141,15 +142,20 @@ def main():
         inst_text_embed = tag_pooled_embeds(clip, inst_tag_ids.to(device), inst_tag_attn.to(device))
         loc = F.normalize(torch.from_numpy(ds.location_embeddings[idx]).float(), dim=-1)
 
-        def rb(t):
-            return t.unsqueeze(0).to(device).repeat(B, *([1] * t.dim()))
-        cond = dict(y=y.repeat(B, 1, 1), y_pooled=y_pooled.repeat(B, 1),
-                    loc_embed=loc.unsqueeze(0).to(device).repeat(B, 1),
-                    inst_text_embed=inst_text_embed.unsqueeze(0).repeat(B, 1, 1),
-                    polygon_xy=rb(polygon_xy), polygon_xy_mask=rb(polygon_xy_mask),
-                    polyline_xy=rb(polyline_xy), polyline_xy_mask=rb(polyline_xy_mask),
-                    bbox_xyxy=rb(bbox_xyxy), point_xy=rb(point_xy), format_mask=rb(format_mask),
-                    instance_mask=rb(instance_mask), dropout_probs=dropouts)
+        pipe_kwargs = dict(
+            prompt_embeds=y, pooled_prompt_embeds=y_pooled,
+            loc_embed=loc.unsqueeze(0).to(device),
+            inst_text_embed=inst_text_embed.unsqueeze(0),
+            polygon_xy=polygon_xy.unsqueeze(0).to(device),
+            polygon_xy_mask=polygon_xy_mask.unsqueeze(0).to(device),
+            polyline_xy=polyline_xy.unsqueeze(0).to(device),
+            polyline_xy_mask=polyline_xy_mask.unsqueeze(0).to(device),
+            bbox_xyxy=bbox_xyxy.unsqueeze(0).to(device),
+            point_xy=point_xy.unsqueeze(0).to(device),
+            format_mask=format_mask.unsqueeze(0).to(device),
+            instance_mask=instance_mask.unsqueeze(0).to(device),
+            dropout_probs=dropouts,
+        )
         viz = dict(polygon_xy=polygon_xy, polygon_xy_mask=polygon_xy_mask,
                    polyline_xy=polyline_xy, polyline_xy_mask=polyline_xy_mask,
                    bbox_xyxy=bbox_xyxy, point_xy=point_xy, instance_mask=instance_mask,
@@ -157,11 +163,17 @@ def main():
         caption = args.prompt or ds.caption(idx)
         srcdesc = f"dataset sample {idx} ({ds.metadata[idx].get('img_name')})"
 
-    xT = torch.randn(B, model.in_channels, 32, 32, device=device)
-    with torch.no_grad():
-        samples = euler_sampler(model, xT, num_steps=args.num_steps, cfg_scale=0.0,
-                                path_type="linear", **cond).to(torch.float32)
-        imgs = decode_latents(vae, samples, device)
+    generator = torch.Generator(device=device).manual_seed(args.seed)
+    out = pipe(
+        num_images_per_prompt=B,
+        num_inference_steps=args.num_steps,
+        guidance_scale=0.0,
+        generator=generator,
+        output_type="pt",
+        condition_type=args.condition_type,
+        **pipe_kwargs,
+    )
+    imgs = out.images
 
     paths = [os.path.join(args.out_dir, f"omega_{args.condition_type}_{i:02d}.png") for i in range(B)]
     save_images(imgs, paths)

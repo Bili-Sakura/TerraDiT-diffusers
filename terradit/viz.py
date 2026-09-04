@@ -11,6 +11,7 @@ polyline) fully implies its bounding box and centroid point, so only the richest
 are "active" is decided by the demo's --condition-type (the GALA dropout mask).
 """
 import torch
+import torchvision
 from PIL import Image, ImageDraw, ImageFont
 
 RES = 256
@@ -26,6 +27,15 @@ def tensor_to_pil(img):
     """img: [3, H, W] float in [0, 1] -> PIL RGB image."""
     arr = (img.detach().clamp(0, 1) * 255).to(torch.uint8).permute(1, 2, 0).cpu().numpy()
     return Image.fromarray(arr, mode="RGB")
+
+
+def save_images(imgs, paths):
+    """Save a batch of ``[3,H,W]`` float tensors in ``[0, 1]`` (or PIL images)."""
+    for img, path in zip(imgs, paths):
+        if torch.is_tensor(img):
+            torchvision.utils.save_image(img, path)
+        else:
+            img.save(path)
 
 
 def _font():

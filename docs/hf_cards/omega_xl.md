@@ -1,6 +1,6 @@
 ---
 license: cc-by-nc-4.0
-library_name: pytorch
+library_name: diffusers
 pipeline_tag: text-to-image
 tags: [satellite-imagery, remote-sensing, diffusion-transformer, geospatial]
 datasets: [lcybuaa/Git-10M, MVRL/TerraDiT-data]
@@ -28,12 +28,14 @@ python terradit/omega_demo.py --condition-type omega
 ```
 
 ```python
-from terradit.generation import build_inference_model
-model = build_inference_model("omega", None, "omega_xl", "cuda")
+from terradit import TerraDiTPipeline
+pipe = TerraDiTPipeline.from_checkpoint("omega_xl")
+image = pipe("A small town crossed by a river.", condition_type="omega").images[0]
 ```
 
 Files: `model.safetensors` (state dict, keys as in `terradit/models/sit.py`, REPA projectors
-removed) and `config.json` (construction flags read by `build_inference_model`).
+removed) and `config.json`, or a converted Diffusers folder from
+`scripts/convert_to_diffusers.py`.
 
 ## Evaluation
 

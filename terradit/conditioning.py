@@ -1,7 +1,7 @@
-"""Unified conditioning builder for the TerraDiT demos and app.
+"""Unified conditioning builder for the TerraDiT pipeline and demos.
 
-Turns a human-friendly *spec* into the keyword arguments euler_sampler expects, so
-the same code path serves both input sources:
+Turns a human-friendly *spec* into the keyword arguments the Diffusers pipeline
+expects, so the same code path serves both input sources:
 
   * dataset mode  -- conditioning pulled from a (HF-cached) dataset row, and
   * manual  mode  -- conditioning typed/clicked by a user.
@@ -32,13 +32,13 @@ import sys
 import numpy as np
 import torch
 
-from terradit.generation import caption_embeds, tag_pooled_embeds
-from terradit.data.dataset import TAG_MAX_LEN
+from terradit.data.dataset import CAPTION_MAX_LEN, TAG_MAX_LEN
 
 MAX_INSTANCES = 64
 MAX_POINTS = 64
 SIGMA_MAX_POINTS = 50
 LOC_DIM = 1280
+OMEGA_CONDITION_DROPOUTS = {"omega": None, "box": [1.0, 1.0, 0.0, 0.0], "point": [1.0, 1.0, 1.0, 0.0]}
 
 
 # --------------------------------------------------------------------------- #
@@ -91,6 +91,37 @@ def loc_embed_from_dataset(ds, idx, device):
     """Borrow a real, normalized RANGE embedding from a dataset tile -> [1, LOC_DIM]."""
     loc = torch.from_numpy(ds.location_embeddings[idx]).float()
     return torch.nn.functional.normalize(loc, dim=-1).unsqueeze(0).to(device)
+
+
+# --------------------------------------------------------------------------- #
+# Text embeddings
+# --------------------------------------------------------------------------- #
+@torch.no_grad()
+def caption_embeds(clip, tokenizer, prompts, device):
+    """Encode caption text(s) -> (y [B,T,D], y_pooled [B,D], attn_mask [B,T])."""
+    tok = tokenizer(prompts, padding="max_length", max_length=CAPTION_MAX_LEN,
+                    truncation=True, return_tensors="pt")
+    out = clip(tok.input_ids.to(device), tok.attention_mask.to(device))
+    y = torch.nn.functional.normalize(out.last_hidden_state, dim=-1)
+    y_pooled = torch.nn.functional.normalize(out.pooler_output, dim=-1)
+    return y, y_pooled, tok.attention_mask.to(device)
+
+
+@torch.no_grad()
+def tag_pooled_embeds(clip, ids, attn):
+    """Pooled, normalized CLIP embeddings for tag tokens. ids/attn: [M, TAG_MAX_LEN]."""
+    out = clip(ids, attn).pooler_output
+    return torch.nn.functional.normalize(out, dim=-1)
+
+
+def resolve_sample_index(ds, img_name=None, index=0):
+    """Resolve a dataset row: by exact img_name if given, else the raw index."""
+    if img_name is None:
+        return index
+    for i, row in enumerate(ds.metadata):
+        if row.get("img_name") == img_name:
+            return i
+    raise ValueError(f"img_name {img_name!r} not found in this family's metadata")
 
 
 # --------------------------------------------------------------------------- #
@@ -177,7 +208,7 @@ def pack_omega_instances(instances, device):
 
 
 # --------------------------------------------------------------------------- #
-# Spec -> euler_sampler kwargs
+# Spec -> pipeline / transformer kwargs
 # --------------------------------------------------------------------------- #
 def _resolve_location(spec, range_model, device):
     if spec.get("loc_embed") is not None:
@@ -189,9 +220,10 @@ def _resolve_location(spec, range_model, device):
 
 def build_conditioning(family, spec, clip, tokenizer, device, *,
                        range_model=None, num_images=1, dropout_probs=None):
-    """Build euler_sampler conditioning kwargs (batched to num_images) for a family.
+    """Build transformer conditioning kwargs (batched to num_images) for a family.
 
-    Returns a dict ready to splat: euler_sampler(model, xT, **cond, num_steps=...).
+    Returns a dict ready to splat into ``TerraDiTPipeline(..., **cond)`` or the
+    SiT forward: ``y``, ``y_pooled``, and family-specific geometry / location.
     """
     B = num_images
     y, y_pooled, _ = caption_embeds(clip, tokenizer, [spec.get("caption", "")], device)
