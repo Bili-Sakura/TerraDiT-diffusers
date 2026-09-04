@@ -161,8 +161,8 @@ verify `img_name` on read, and captions are read from it. Demos do not need it; 
 ## Evaluation
 
 ```bash
-python terradit/evaluate.py --ckpt omega_xl --split random --condition-type omega \
-    --data-root data/git10m --hf-cache-dir data/git10m/hf
+python terradit/evaluate.py --ckpt BiliSakura/TerraDiT --family omega --split random \
+    --condition-type omega --data-root data/git10m --hf-cache-dir data/git10m/hf
 bash scripts/eval_all.sh          # full grid (random + spatial; DENSE=1 adds the dense subset)
 ```
 
